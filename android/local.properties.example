@@ -1,0 +1,5 @@
+# Copy this file to local.properties and update sdk.dir if Gradle cannot find
+# the Android SDK automatically.
+#
+# Windows paths must escape backslashes:
+# sdk.dir=C\:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
