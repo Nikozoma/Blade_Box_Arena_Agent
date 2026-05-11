@@ -1,0 +1,55 @@
+# Assets and Map Style
+
+Integrated asset sources:
+- Adventurer player sprite pack.
+- Enemy sprite/animation pack.
+- Dungeon tileset pack.
+- VFX Free Pack: Effect_ElectricShield.
+- Bitlands 1.0 asset pack.
+- Custom knight app icon image.
+
+Bitlands assets copied into browser-safe paths:
+- assets/bitlands/tileset.png
+- assets/bitlands/objects/torch.png
+- assets/bitlands/objects/chest_1.png
+- assets/bitlands/objects/chest_2.png
+- assets/bitlands/objects/barrel_1.png
+- assets/bitlands/objects/banner_1.png
+
+Map style target:
+- Readable Zelda/Bitlands-style dungeon.
+- Authored rectangular room templates.
+- Clean corridors.
+- Dark void/filler outside rooms.
+- Clear stone wall borders.
+- Deliberate prop placement.
+- Avoid random noisy maze/tile soup.
+
+Current map generation:
+- Starts from dark void.
+- Carves authored room templates.
+- Connects rooms with clean corridors.
+- Adds walls/borders around only playable floor.
+- Keeps visual tile semantics aligned with collision:
+  - floor/path = walkable
+  - wall/void = blocked
+  - props only block if intended
+
+World size:
+- 84 x 60 tiles.
+- 3360 x 2400 px world.
+- Larger than viewport.
+- Camera follows/clamps.
+
+Future map workflow idea:
+- User can draw/upload a low-res dungeon layout image.
+- Codex can use it as a blueprint, not pixel-perfect copy.
+- Codex should convert rooms/corridors into playable tile map.
+- Codex should improve readability and add props/assets.
+- Must preserve collision/pathing semantics.
+
+Important for map changes:
+- Keep all walkable areas connected.
+- Enemy spawning must use valid walkable tiles.
+- XP/pickups must land on walkable tiles.
+- Host/clients must use same map in co-op.

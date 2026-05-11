@@ -1,0 +1,65 @@
+# Next Feature Roadmap
+
+Recommended order:
+1. Stabilization/playtesting pass.
+2. Weapon system expansion.
+3. New weapons/content.
+4. Chests/interactive objects.
+5. More upgrade cards.
+6. Objective map/game mode prototype.
+7. Boss/enemy variety.
+8. Audio/music/VFX polish.
+9. Better map creation workflow.
+
+Best next feature:
+Weapon system expansion.
+
+Why weapon system first:
+- High gameplay impact.
+- Lower risk than new game modes.
+- Builds on existing attack/upgrade/shop/co-op systems.
+- Creates replayability quickly.
+
+Possible weapon types:
+- Fast short sword.
+- Slower longsword.
+- Dagger/dual daggers.
+- Spear.
+- Axe.
+- Hammer.
+- Magic staff later.
+
+Weapon definition fields:
+- name
+- damage
+- attack speed/cooldown
+- range
+- swing arc
+- knockback
+- crit chance if desired
+- animation/visual style
+- unlock cost/shop tier
+
+Chests/world objects:
+- Good medium-risk feature.
+- Should be host-owned in co-op.
+- Open state must sync to clients.
+- Rewards should be deterministic/host-authoritative.
+
+Objective game modes:
+- More complex than weapons/chests.
+- Needs match objective state.
+- Needs co-op sync.
+- Good after weapon/content systems.
+
+Potential objectives:
+- Defend crystal.
+- Destroy enemy nests.
+- Collect relics then extract.
+- Escort NPC/object.
+- Hold capture zones.
+- Clear dungeon rooms.
+- Survive then reach exit.
+
+Rule:
+Add one system at a time, build APK, test single-player, test co-op, then continue.

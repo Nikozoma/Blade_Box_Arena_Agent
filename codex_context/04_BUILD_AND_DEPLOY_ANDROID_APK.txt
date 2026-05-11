@@ -1,0 +1,64 @@
+# Build and Deploy: Android APK
+
+Goal:
+Build installable Android debug APK.
+
+Known working APK path:
+android/app/build/outputs/apk/debug/app-debug.apk
+
+Core commands:
+1. Install dependencies if needed:
+   npm.cmd install
+
+2. Build/sync web assets:
+   npm.cmd run build:web
+   npx.cmd cap sync android
+
+3. Build APK:
+   npm.cmd run android:build
+
+Recommended validation commands:
+- node --check src\game.js
+- node --check scripts\sync-web.js
+- node --check scripts\dev-server.js
+- npx.cmd cap doctor android
+- npm.cmd run build:web
+- npx.cmd cap sync android
+- npm.cmd run android:build
+
+Android SDK/JDK notes:
+- Existing Android SDK was found at:
+  C:\Users\Nick\AppData\Local\Android\Sdk
+- Android Studio JBR was used:
+  C:\Program Files\Android\Android Studio\jbr
+- Project-local android/local.properties may contain:
+  sdk.dir=C\:\\Users\\Nick\\AppData\\Local\\Android\\Sdk
+- android/gradle.properties may contain:
+  org.gradle.java.home=C:/Program Files/Android/Android Studio/jbr
+
+Important .gitignore behavior:
+Do not commit build outputs or local machine config:
+- node_modules/
+- dist/
+- android/.gradle/
+- android/build/
+- android/app/build/
+- *.apk
+- *.aab
+- local.properties
+- android/local.properties
+- android/app/src/main/assets/
+
+APK install testing:
+1. Build APK.
+2. Copy app-debug.apk to Android phone.
+3. Install from Files/My Files.
+4. Allow Install Unknown Apps if prompted.
+5. Confirm app launches fullscreen landscape.
+6. Confirm icon appears correctly.
+7. Test single-player and co-op flows.
+
+When making future changes:
+- Rebuild APK after changes.
+- Install same APK on all co-op test phones.
+- Test single-player before co-op.

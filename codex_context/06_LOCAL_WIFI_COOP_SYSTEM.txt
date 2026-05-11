@@ -1,0 +1,76 @@
+# Local WiFi Co-op System
+
+Goal:
+2-4 player local WiFi co-op where one Android phone hosts and other phones join.
+
+Current status:
+- Manual IP join works.
+- Auto lobby discovery works.
+- Host-authoritative gameplay works.
+- Co-op smoothing/prediction implemented.
+- Host snapshot rate configurable: 45Hz default/recommended, 60Hz smoother.
+- Co-op level-up choices work through queued UP xN button.
+
+Networking architecture:
+- Native Capacitor Android plugin: LocalNetworkPlugin.java.
+- TCP gameplay protocol on port 7777.
+- UDP discovery beacons/listening on port 7778.
+- Messages are newline-delimited JSON.
+- Manual IP join remains fallback.
+
+Android permissions:
+- INTERNET / network permissions as needed by existing wrapper.
+- CHANGE_WIFI_MULTICAST_STATE added for LAN discovery.
+
+Host behavior:
+- Starts TCP server on 7777.
+- Broadcasts UDP lobby beacons on 7778.
+- Owns authoritative simulation.
+- Simulates players, enemies, attacks, XP, drops, pickups, waves, rewards.
+- Host player is Player 1.
+- Sends snapshots to clients.
+- Rejects/ignores joins beyond 4 total players.
+
+Client behavior:
+- Listens for discovered lobbies on Join Co-op screen.
+- Can tap discovered lobby to connect.
+- Can manually enter IP/IP:port fallback.
+- Sends input to host.
+- Renders host snapshots.
+- Camera follows client's own player.
+- Saves local reward deltas from host.
+
+Snapshot/input smoothing:
+- Initial V1 had 15Hz snapshots and was jittery.
+- Later pass added:
+  - 30Hz snapshots/input baseline
+  - interpolation for remote players/enemies
+  - local client movement prediction
+  - bounded host correction
+  - stable enemy IDs
+  - TCP_NODELAY
+- Later pass added host snapshot setting:
+  - 45Hz default/recommended
+  - 60Hz smoother
+
+Co-op level-ups:
+- Single-player still uses pause-and-choose card flow.
+- Co-op does not pause the whole match.
+- When local player has pending level-up choices, top-left UP xN button appears.
+- Player opens card menu when safe.
+- Multiple pending choices stack and are resolved one at a time.
+- Host queues offers and validates choices.
+- Clients receive levelUpOffer and send levelUpChoice.
+- Host applies upgrade and snapshots new player state.
+
+Rewards/kill points:
+- Do not reward only host.
+- Team-shared kill credit for V1.
+- Each device saves its own kill points locally.
+- Reward event IDs prevent duplicate reward application.
+
+Known limitations:
+- Local WiFi only.
+- No online matchmaking.
+- No accounts/cloud saves.
+- Router/WiFi settings may affect UDP discovery; manual IP fallback exists.

@@ -1,0 +1,48 @@
+# Mobile Controls and UI
+
+Target:
+Landscape Android APK with touch controls.
+
+Touch controls:
+- Left half of screen = movement joystick.
+- Right half of screen = aim/facing/attack joystick.
+- Each joystick appears where the finger first touches its half.
+- Origin stays fixed while the finger is down.
+- Movement uses displacement from origin.
+- Dead zone prevents accidental movement/attack.
+- Max radius was reduced by about 50% for comfortable thumb travel.
+- True multi-touch uses separate pointer IDs for left/right controls.
+- Handles pointerup, pointercancel, and lostpointercapture.
+
+Facing priority:
+1. Active right aim stick controls facing.
+2. If right stick inactive and movement active, face movement direction.
+3. If idle, preserve last facing direction.
+4. Desktop mouse aiming still works.
+
+Right stick attack behavior:
+- Attack loop starts/continues only when right-stick aim is outside dead zone.
+- Player can move one direction while attacking another.
+
+Settings/options UI:
+- Gear icon is canvas-drawn, not emoji text.
+- Gear appears on main menu and gameplay screens.
+- Gear opens Options menu.
+- Main menu Options includes zoom/settings and Back to Menu.
+- Gameplay Options pauses or safely interrupts local controls and includes Resume plus Leave Match / Main Menu.
+- Opening options clears active joystick pointers so the player does not keep moving/attacking.
+
+Camera zoom options:
+- Normal.
+- Close 1.5x.
+- Very Close 2x.
+- Zoom affects world/camera draw path only.
+- UI/menu/joystick overlays stay in screen/virtual UI space.
+- Setting persists in local storage:
+  bladeBoxArena.cameraZoom
+
+Canvas scaling rules:
+- Do not non-uniformly stretch the canvas.
+- Physical backing buffer should match displayed CSS size.
+- Use uniform RENDER_SCALE.
+- Keep touch/mouse coordinate conversion consistent with virtual viewport and zoom.

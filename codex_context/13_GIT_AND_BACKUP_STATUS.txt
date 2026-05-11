@@ -1,0 +1,53 @@
+# Git and Backup Status
+
+Local Git:
+- Repository created in the project folder.
+- Branch: main.
+- Stable checkpoint commit:
+  90fc6a6bf93e7cd054a544af23645103a0be36b6
+- Commit message:
+  Mobile APK and Local Co-op V1 stable checkpoint
+
+GitHub:
+- GitHub CLI authenticated as Nikozoma.
+- Private GitHub repo created and pushed:
+  https://github.com/Nikozoma/GameTest
+- Local main branch tracks origin/main.
+
+Useful commands:
+Check status:
+  git status
+
+Commit future checkpoint:
+  git add .
+  git commit -m "Checkpoint message"
+  git push
+
+View log:
+  git log --oneline --decorate -10
+
+Return to last committed state carefully:
+  git status
+  git restore <file>
+
+Hard reset only if intentionally discarding all local changes:
+  git reset --hard HEAD
+
+Important ignore rules:
+- node_modules/
+- dist/
+- *.apk
+- *.aab
+- *.log
+- local.properties
+- android/local.properties
+- android/.gradle/
+- android/build/
+- android/app/build/
+- android/capacitor-cordova-android-plugins/build/
+- android/app/src/main/assets/
+
+Migration safety:
+- Old Windows profile can be kept temporarily.
+- Main profile copy should be verified before deleting old profile.
+- GitHub backup is an additional recovery layer.

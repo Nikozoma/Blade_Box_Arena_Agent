@@ -1,0 +1,45 @@
+# Codex Workflow Rules
+
+Project workflow:
+- ChatGPT plans and writes prompts.
+- Codex edits/builds/tests.
+- User bridges results back.
+
+Current prompt strategy:
+- Small polish/fix = short focused prompt.
+- Major systems = larger coherent prompt.
+- Avoid over-specifying tiny tasks; it burns credits and time.
+- Preserve working systems by default.
+
+Important rule learned:
+For small fixes like icon changes, button position, facing behavior, joystick range, etc., use short prompts.
+For major features like Android APK, co-op networking, or map generator rewrites, use detailed prompts.
+
+Best Codex mode guidance:
+- Medium: Git setup, simple file organization, basic docs, tiny CSS/UI tweaks.
+- High: normal gameplay features, small-to-medium implementation tasks.
+- Extra High: networking, co-op architecture, Android/native bridge, complex state refactors.
+
+Before major changes:
+- Check Git status.
+- Make sure working tree is clean or intentionally changed.
+- Consider making a checkpoint commit.
+
+After changes:
+- Run relevant checks.
+- Rebuild APK if Android/mobile affected.
+- Test single-player before co-op.
+- Test host and client with same APK build.
+- Commit successful stable milestones.
+
+Do not let Codex:
+- Rewrite the whole game unnecessarily.
+- Delete working project files.
+- Commit build outputs/APKs unless explicitly desired.
+- Break single-player while adding co-op content.
+- Change networking architecture casually.
+- Store secrets/tokens/passwords.
+
+When Codex asks permission for expected build commands:
+- Approve one-time if command matches requested build/test sequence.
+- Avoid broad “don’t ask again” unless you are sure.

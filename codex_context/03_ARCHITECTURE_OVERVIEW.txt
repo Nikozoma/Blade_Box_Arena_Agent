@@ -1,0 +1,60 @@
+# Architecture Overview
+
+Core stack:
+- Plain HTML/CSS/JavaScript.
+- HTML5 Canvas rendering.
+- Capacitor Android wrapper for APK builds.
+- Native Android plugin for LAN networking.
+
+Main files:
+- index.html
+- styles.css
+- src/game.js
+- scripts/dev-server.js
+- scripts/sync-web.js
+- capacitor.config.json
+- package.json
+- android/app/src/main/java/com/codextestzone/bladeboxarena/MainActivity.java
+- android/app/src/main/java/com/codextestzone/bladeboxarena/LocalNetworkPlugin.java
+- android/app/src/main/AndroidManifest.xml
+
+Rendering model:
+- Canvas uses a physical backing buffer matching the displayed canvas size.
+- Game uses a virtual viewport based on the original 1280x900 design.
+- Rendering uses one uniform RENDER_SCALE.
+- Wide phones expand virtual width while preserving virtual height.
+- Canvas must never be non-uniformly stretched.
+
+World/camera model:
+- Game world is tile-based and larger than viewport.
+- Camera follows local player and clamps at world bounds.
+- Collision/pathing/spawning use world coordinates.
+- UI/HUD/menu/joystick overlays use screen/virtual UI coordinates.
+- Camera zoom affects the world/camera draw path, not the canvas itself.
+
+Input model:
+- Desktop: keyboard movement + mouse aiming/attack.
+- Mobile: dual floating virtual joysticks.
+- Left half: movement.
+- Right half: aim/facing/attack loop.
+- Right aim stick overrides movement-facing.
+- If aim is inactive and player is moving, player faces movement direction.
+- If idle, preserve last facing angle.
+
+Game state model:
+- Single-player uses local simulation.
+- Co-op host owns authoritative simulation.
+- Co-op clients send input and render host snapshots.
+- Host/client split should be preserved.
+
+Networking model:
+- TCP gameplay: port 7777.
+- UDP discovery: port 7778.
+- Native Android plugin provides local network access.
+- JS talks to native networking bridge through Capacitor plugin methods/events.
+- Messages are newline-delimited JSON.
+
+Persistence model:
+- Local storage is used for permanent kill points/shop currency and settings.
+- No accounts/cloud/database.
+- Each device owns its own persistent save.

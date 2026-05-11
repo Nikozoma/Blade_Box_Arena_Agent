@@ -1,0 +1,65 @@
+# Test Checklist
+
+After any gameplay change:
+- Start single-player.
+- Move, aim, attack.
+- Kill enemies.
+- Collect XP.
+- Trigger level-up.
+- Pick upgrade.
+- Test shield pickup if possible.
+- Test dual-sword pickup if possible.
+- Leave match/main menu.
+- Confirm kill points/shop state persists.
+
+After any mobile/input change:
+- Install APK on phone.
+- Confirm fullscreen landscape.
+- Left joystick moves.
+- Right joystick aims/attacks.
+- Both thumbs work simultaneously.
+- Joystick radius/dead zone feel good.
+- Player faces movement when not aiming.
+- Player preserves facing when idle.
+- Settings gear works on menu and gameplay.
+- Zoom setting works and persists.
+
+After any co-op change:
+- Install same APK on all phones.
+- Put phones on same WiFi.
+- Host phone: Host Co-op.
+- Client phone: Join Co-op.
+- Confirm auto-discovery shows lobby.
+- Tap discovered lobby and connect.
+- Also test manual IP fallback.
+- Host starts match.
+- Both players can move/aim/attack.
+- Enemies target players.
+- XP/level-up works.
+- Client UP xN button works.
+- Rewards save locally on both devices.
+- Host leave/client leave does not crash.
+
+After any map change:
+- Walkable areas connected.
+- Player collision works.
+- Enemy collision/pathing works.
+- Spawns only on walkable tiles.
+- XP/pickups only on walkable tiles.
+- Camera clamps at edges.
+- Co-op clients see same map.
+
+After any APK/build change:
+- node --check src\game.js
+- node --check scripts\sync-web.js
+- npm.cmd run build:web
+- npx.cmd cap sync android
+- npm.cmd run android:build
+- Install APK.
+- Launch test.
+
+Before committing:
+- git status
+- verify no build junk/APK/local.properties committed
+- commit with clear message
+- git push

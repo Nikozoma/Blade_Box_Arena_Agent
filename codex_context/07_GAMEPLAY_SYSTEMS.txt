@@ -1,0 +1,68 @@
+# Gameplay Systems
+
+Core loop:
+- Top-down action roguelite dungeon game.
+- Player survives waves, kills enemies, collects XP/pickups, banks kill points, upgrades via shop.
+
+Player:
+- Health.
+- Movement speed upgrades.
+- Sword attack.
+- Facing/aim independent from movement.
+- Uses Adventurer sprite animations.
+- Can receive level-up upgrades.
+
+Combat:
+- Sword attack cooldown.
+- Visible sword attack animation.
+- Dual-sword buff attacks forward/backward temporarily.
+- Shield pickup blocks one enemy hit.
+- Electric shield VFX indicates active shield.
+
+Enemies:
+- Spawn on valid walkable tiles.
+- Move/chase/path toward players.
+- In co-op, target nearest living connected player.
+- Drop XP orbs and random pickups.
+
+XP/level-up:
+- Enemies drop XP orbs.
+- Player collects XP.
+- Level-up offers 3 upgrade choices.
+- Single-player pauses for cards.
+- Co-op queues choices behind UP xN button.
+
+Example level-up upgrades already implemented:
+- +20% max HP.
+- Heal 20% HP.
+- +20% sword damage.
+- +20% attack speed.
+- +20% movement speed.
+
+Pickups:
+- Shield pickup.
+- Dual-sword temporary buff.
+
+Kill points/shop:
+- Enemy kills award kill points.
+- Kill points persist locally.
+- Shop exists on main menu.
+- Sword tiers:
+  - Tier I: 2x damage.
+  - Tier II: 3x damage, 2x swing speed.
+  - Tier III: 5x damage, 3x swing speed.
+
+Game modes currently:
+- Single Player.
+- Host Co-op.
+- Join Co-op.
+
+Potential future game modes:
+- survival/waves
+- objective dungeon
+- defend object
+- destroy nests
+- treasure extraction
+- boss arena
+- hold zones
+- survive then escape

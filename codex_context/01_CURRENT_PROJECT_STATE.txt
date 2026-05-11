@@ -1,0 +1,68 @@
+# Current Project State
+
+Project:
+Blade Box Arena
+
+Core state:
+- Top-down 2D roguelite/action arena-dungeon game.
+- Built with plain HTML, CSS, and JavaScript using HTML5 Canvas.
+- Packaged as an Android APK using Capacitor WebView wrapper.
+- Android build pipeline works.
+- Game installs and runs on Android phone as a normal app.
+- Runs in landscape fullscreen.
+- Local WiFi co-op works.
+- Auto lobby discovery works.
+- Manual IP join remains available as fallback.
+
+Major systems currently working:
+- Main menu.
+- Single-player mode.
+- Host Co-op mode.
+- Join Co-op mode.
+- Local WiFi auto-discovery.
+- Manual IP co-op join.
+- Mobile dual-stick touch controls.
+- Desktop keyboard/mouse controls.
+- Camera following player in a larger scrolling dungeon world.
+- Adjustable camera zoom.
+- Settings/options menu on main menu and gameplay screens.
+- XP orbs and level-up card upgrades.
+- Co-op queued level-up button/menu.
+- Enemy waves.
+- Enemy AI/pathing.
+- Player health.
+- Sword attacks.
+- Dual-sword buff.
+- One-hit shield pickup/electric shield VFX.
+- Kill points/permanent shop currency.
+- Shop sword tiers.
+- App icon.
+- Local Git checkpoint.
+- GitHub private repo backup.
+
+Current stable checkpoint:
+- Local Git commit:
+  90fc6a6bf93e7cd054a544af23645103a0be36b6
+- Commit message:
+  Mobile APK and Local Co-op V1 stable checkpoint
+- GitHub repo:
+  https://github.com/Nikozoma/GameTest
+
+Do not casually rewrite:
+- src/game.js core state/game loop.
+- Android/Capacitor wrapper.
+- LocalNetworkPlugin.java networking bridge.
+- Camera/virtual viewport scaling.
+- Co-op host/client authority model.
+- Save/kill-point persistence.
+
+Preferred next direction:
+- Add content on top of the stable foundation:
+  - weapon system expansion
+  - more weapons
+  - chests/crates
+  - new pickups
+  - new upgrade cards
+  - objective-based maps/modes
+  - bosses
+  - more maps

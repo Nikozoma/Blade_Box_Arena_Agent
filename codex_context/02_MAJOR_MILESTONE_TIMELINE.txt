@@ -1,0 +1,91 @@
+# Major Milestone Timeline
+
+1. Initial browser prototype
+- Created from scratch with HTML/CSS/JS canvas.
+- Main menu, player movement, mouse aim, sword attack, enemies, waves, health, game over.
+
+2. Roguelite progression
+- Added XP orbs.
+- Added level-up upgrade cards.
+- Added shield pickup.
+- Added dual-sword buff.
+- Added kill points.
+- Added permanent shop and sword tiers.
+
+3. Visual asset integration
+- Added player Adventurer sprite/animations.
+- Added enemy sprite assets.
+- Added dungeon tiles and props.
+- Replaced block placeholder visuals.
+
+4. Dungeon map conversion
+- Replaced empty arena with dungeon rooms/corridors.
+- Added tile collision.
+- Added enemy flow-field/pathing.
+- Added shield VFX.
+- Fixed dual-sword rear visual.
+
+5. Scrolling world/camera
+- Converted map into larger-than-screen world.
+- Added camera follow and clamp.
+- Rendered gameplay entities relative to camera.
+- Preserved world-coordinate collision/spawning/pathing.
+
+6. Bitlands-style map pass
+- Replaced ugly/random map layout with authored room-template dungeon generator.
+- Added Bitlands 1.0 assets to browser-safe project paths.
+- Created clearer rooms, corridors, void, walls, props.
+
+7. Android APK foundation
+- Added Capacitor Android wrapper.
+- Added landscape fullscreen configuration.
+- Added mobile touch controls.
+- Built debug APK.
+
+8. Mobile scaling fixes
+- Fixed non-uniform canvas stretch.
+- Added virtual viewport scaling.
+- Preserved correct movement/touch mapping.
+
+9. App icon
+- Added custom knight launcher icon.
+- Generated Android launcher/adaptive icons.
+
+10. Settings/options/zoom
+- Added canvas-drawn settings gear.
+- Added options menu from menu and gameplay.
+- Added camera zoom: Normal, Close 1.5x, Very Close 2x.
+- Fixed gear rendering in Android WebView.
+
+11. Mobile control polish
+- Reduced joystick radius.
+- Added movement-direction facing fallback when right aim stick is inactive.
+
+12. Local WiFi co-op V1
+- Added native Capacitor Android TCP bridge.
+- Host phone runs TCP server on port 7777.
+- Client phones join by IP.
+- Host authoritative game simulation.
+- Clients send input; host sends snapshots.
+
+13. Co-op smoothing
+- Increased snapshots/input to 30Hz initially.
+- Added interpolation/prediction.
+- Added stable enemy IDs.
+- Enabled TCP_NODELAY.
+
+14. Co-op snapshot setting and level-up cards
+- Host lobby can choose 45Hz default or 60Hz snapshot rate.
+- Co-op level-up cards are queued via top-left UP xN button.
+- Host remains authoritative for applying upgrades.
+
+15. Auto lobby discovery
+- Added UDP discovery on port 7778.
+- Host broadcasts lobby beacons.
+- Join screen discovers lobbies automatically.
+- Manual IP remains fallback.
+
+16. Git/GitHub checkpoint
+- Local Git repo created.
+- Stable checkpoint committed.
+- Private GitHub backup pushed.

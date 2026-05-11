@@ -1,0 +1,59 @@
+# Safe Prompt Patterns
+
+Small fix prompt pattern:
+"Fix only X. Preserve Y/Z. Rebuild APK and provide path."
+
+Example:
+"Reduce both mobile joystick max radii by 50%. Keep dead zone unchanged. Preserve desktop controls, mobile controls, scaling, and APK build. Rebuild APK and provide path."
+
+Medium feature prompt pattern:
+"Add feature X using the existing systems. Do not rewrite core architecture. Preserve single-player/co-op/mobile/APK. Run checks and build."
+
+Large system prompt pattern:
+1. Explain current stable state.
+2. Define goal.
+3. Define architecture constraints.
+4. Break into implementation phases.
+5. List what must not break.
+6. Require tests/build output.
+
+Useful standard constraints:
+- Preserve single-player.
+- Preserve manual IP co-op.
+- Preserve APK build.
+- Preserve mobile controls.
+- Preserve settings/options/zoom.
+- Preserve local save/kill points.
+- Do not implement online services unless explicitly requested.
+- Prefer targeted changes.
+
+Useful standard build block:
+Run:
+- node --check src\game.js
+- node --check scripts\sync-web.js
+- npm.cmd run build:web
+- npx.cmd cap sync android
+- npm.cmd run android:build
+
+Useful expected output:
+- Explain what changed.
+- List changed files.
+- Confirm key systems still work.
+- Provide APK path.
+
+When working with co-op:
+Always mention:
+- Host authoritative.
+- Clients send input.
+- Host sends snapshots.
+- Manual IP join preserved.
+- Auto discovery preserved if already working.
+- Each device saves own kill points.
+
+When working with maps:
+Always mention:
+- Keep walkable areas connected.
+- Keep collision/visual semantics aligned.
+- Spawn/drop only on walkable tiles.
+- Preserve world coordinates/camera.
+- Co-op host/clients must share same map.
