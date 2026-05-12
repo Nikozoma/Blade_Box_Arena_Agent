@@ -49,6 +49,40 @@ const SWORD_TIERS = [
   { name: "Sword Tier III", cost: 130, damage: 5, speed: 3 }
 ];
 
+const WEAPON_DEFINITIONS = [
+  {
+    id: "balancedSword",
+    name: "Balanced Sword",
+    damageMultiplier: 1,
+    cooldown: 0.38,
+    range: 74,
+    halfArc: Math.PI * 0.36,
+    swingDuration: 0.14,
+    visualReach: 74
+  },
+  {
+    id: "shortSword",
+    name: "Short Sword",
+    damageMultiplier: 0.75,
+    cooldown: 0.28,
+    range: 58,
+    halfArc: Math.PI * 0.32,
+    swingDuration: 0.1,
+    visualReach: 58
+  },
+  {
+    id: "longsword",
+    name: "Longsword",
+    damageMultiplier: 1.35,
+    cooldown: 0.52,
+    range: 96,
+    halfArc: Math.PI * 0.4,
+    swingDuration: 0.18,
+    visualReach: 96
+  }
+];
+const DEFAULT_WEAPON_ID = WEAPON_DEFINITIONS[0].id;
+
 const NETWORK_PORT = 7777;
 const DISCOVERY_PORT = 7778;
 const MAX_COOP_PLAYERS = 4;
@@ -273,6 +307,7 @@ let hostButton;
 let joinButton;
 let shopBackButton;
 let shopPurchaseButtons = [];
+let weaponSelectButtons = [];
 let levelUpButtons = [];
 let gameOverButton;
 let settingsButton;
@@ -314,7 +349,7 @@ const networkDebug = {
 
 resizeCanvasToDisplaySize(true);
 
-function createPlayer(id = "p1", name = "Player 1", spawnIndex = 0, swordTier = permanent.swordTier) {
+function createPlayer(id = "p1", name = "Player 1", spawnIndex = 0, swordTier = permanent.swordTier, weaponId = permanent.weaponId) {
   const spawn = PLAYER_SPAWNS[spawnIndex % PLAYER_SPAWNS.length];
   const start = tileToWorld(spawn.col, spawn.row);
   return {
@@ -342,6 +377,7 @@ function createPlayer(id = "p1", name = "Player 1", spawnIndex = 0, swordTier = 
     connected: true,
     color: PLAYER_COLORS[spawnIndex % PLAYER_COLORS.length],
     swordTier: clamp(Math.round(swordTier || 0), 0, SWORD_TIERS.length - 1),
+    weaponId: getWeaponById(weaponId).id,
     pendingLevelUps: 0,
     activeLevelOffer: null
   };
@@ -616,9 +652,10 @@ function tryAttack(attacker = player) {
   }
 
   const swordStats = getSwordStats(attacker);
+  const weapon = getWeaponDefinition(attacker);
   const speedMultiplier = attacker.attackSpeedMultiplier * swordStats.speed;
-  attacker.attackCooldown = 0.38 / speedMultiplier;
-  attacker.attackDuration = 0.14 / Math.sqrt(speedMultiplier);
+  attacker.attackCooldown = weapon.cooldown / speedMultiplier;
+  attacker.attackDuration = weapon.swingDuration / Math.sqrt(speedMultiplier);
   attacker.attackTimer = attacker.attackDuration;
 
   const attackAngles = [attacker.angle];
@@ -636,9 +673,10 @@ function tryAttack(attacker = player) {
 
 function damageEnemiesInArc(attacker, attackAngle, hitEnemies) {
   const swordStats = getSwordStats(attacker);
-  const damage = attacker.damageMultiplier * swordStats.damage;
-  const reach = 74;
-  const halfArc = Math.PI * 0.36;
+  const weapon = getWeaponDefinition(attacker);
+  const damage = attacker.damageMultiplier * swordStats.damage * weapon.damageMultiplier;
+  const reach = weapon.range;
+  const halfArc = weapon.halfArc;
 
   for (const enemy of enemies) {
     if (hitEnemies.has(enemy)) continue;
@@ -901,6 +939,26 @@ function damagePlayer(amount, activePlayer = player) {
 
 function getSwordStats(activePlayer = player) {
   return SWORD_TIERS[activePlayer?.swordTier ?? permanent.swordTier] || SWORD_TIERS[0];
+}
+
+function getWeaponById(weaponId) {
+  return WEAPON_DEFINITIONS.find((weapon) => weapon.id === weaponId) || WEAPON_DEFINITIONS[0];
+}
+
+function getWeaponDefinition(activePlayer = player) {
+  return getWeaponById(activePlayer?.weaponId || permanent.weaponId);
+}
+
+function getSelectedWeapon() {
+  return getWeaponById(permanent.weaponId);
+}
+
+function selectWeapon(weaponId) {
+  permanent.weaponId = getWeaponById(weaponId).id;
+  if (sessionMode === SESSION.SINGLE && player) {
+    player.weaponId = permanent.weaponId;
+  }
+  savePermanentProgress();
 }
 
 function moveActor(actor, dx, dy) {
@@ -1819,6 +1877,10 @@ function drawStatusPill(x, y, width, text, color) {
   ctx.textAlign = "left";
 }
 
+function formatMultiplier(value) {
+  return `${Number(value).toFixed(2).replace(/\.?0+$/, "")}x`;
+}
+
 function drawMenu() {
   drawArenaPreview();
   ctx.textAlign = "center";
@@ -1830,7 +1892,7 @@ function drawMenu() {
   ctx.fillText("Collect XP, choose upgrades, bank kill points, and push deeper waves.", WIDTH / 2, 280);
   ctx.fillStyle = "#f4f6f8";
   ctx.font = "800 22px system-ui, sans-serif";
-  ctx.fillText(`Kill Points: ${permanent.killPoints}   Sword: ${SWORD_TIERS[permanent.swordTier].name}`, WIDTH / 2, 332);
+  ctx.fillText(`Kill Points: ${permanent.killPoints}   Sword: ${SWORD_TIERS[permanent.swordTier].name}   Weapon: ${getSelectedWeapon().name}`, WIDTH / 2, 332);
 
   menuButton = drawButton(WIDTH / 2 - 330, 382, 200, 56, "Single Player");
   hostButton = drawButton(WIDTH / 2 - 100, 382, 200, 56, "Host Co-op");
@@ -1974,12 +2036,15 @@ function drawShop() {
   ctx.fillText(`Kill Points: ${permanent.killPoints}`, WIDTH / 2, 212);
 
   shopPurchaseButtons = [];
+  weaponSelectButtons = [];
   const startX = WIDTH / 2 - 480;
   for (let tier = 1; tier < SWORD_TIERS.length; tier += 1) {
     drawShopTier(startX + (tier - 1) * 320, 270, tier);
   }
 
-  shopBackButton = drawButton(WIDTH / 2 - 105, 714, 210, 54, "Back");
+  drawWeaponSelector(startX, 632);
+
+  shopBackButton = drawButton(WIDTH / 2 - 105, 792, 210, 54, "Back");
   ctx.textAlign = "left";
 }
 
@@ -2013,6 +2078,27 @@ function drawShopTier(x, y, tier) {
 
   const button = drawButton(x + 55, y + 238, 170, 48, label, !canBuy && !purchased);
   shopPurchaseButtons.push({ ...button, tier, canBuy });
+}
+
+function drawWeaponSelector(x, y) {
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "800 22px system-ui, sans-serif";
+  ctx.fillText("Weapon Test Loadout", WIDTH / 2, y);
+  ctx.fillStyle = "#cbd5df";
+  ctx.font = "600 15px system-ui, sans-serif";
+  ctx.fillText("Sword tiers and level-up upgrades still multiply the selected weapon.", WIDTH / 2, y + 28);
+
+  for (let i = 0; i < WEAPON_DEFINITIONS.length; i += 1) {
+    const weapon = WEAPON_DEFINITIONS[i];
+    const buttonX = x + i * 320;
+    const selected = getSelectedWeapon().id === weapon.id;
+    const button = drawToggleButton(buttonX, y + 48, 280, 60, weapon.name, selected);
+    ctx.fillStyle = selected ? "#f4f6f8" : "#cbd5df";
+    ctx.font = "600 13px system-ui, sans-serif";
+    ctx.fillText(`Damage ${formatMultiplier(weapon.damageMultiplier)}  Cooldown ${weapon.cooldown.toFixed(2)}s  Range ${weapon.range}`, buttonX + 140, y + 125);
+    weaponSelectButtons.push({ ...button, weaponId: weapon.id });
+  }
 }
 
 function drawLevelUp() {
@@ -2308,6 +2394,14 @@ function handleCanvasClick() {
     for (const button of shopPurchaseButtons) {
       if (button.canBuy && pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
         buySwordTier(button.tier);
+        mouse.down = false;
+        return;
+      }
+    }
+
+    for (const button of weaponSelectButtons) {
+      if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
+        selectWeapon(button.weaponId);
         mouse.down = false;
         return;
       }
@@ -2684,10 +2778,11 @@ function loadPermanentProgress() {
     const parsed = JSON.parse(localStorage.getItem("bladeBoxArena.permanent") || "{}");
     return {
       killPoints: Math.max(0, Number(parsed.killPoints) || 0),
-      swordTier: clamp(Math.round(Number(parsed.swordTier) || 0), 0, SWORD_TIERS.length - 1)
+      swordTier: clamp(Math.round(Number(parsed.swordTier) || 0), 0, SWORD_TIERS.length - 1),
+      weaponId: getWeaponById(parsed.weaponId).id
     };
   } catch (error) {
-    return { killPoints: 0, swordTier: 0 };
+    return { killPoints: 0, swordTier: 0, weaponId: DEFAULT_WEAPON_ID };
   }
 }
 
@@ -2839,7 +2934,7 @@ async function openHostLobby() {
   localPlayerId = "p1";
   player = undefined;
   players = [];
-  lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier }];
+  lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier, weaponId: permanent.weaponId }];
   hostSnapshotRate = DEFAULT_HOST_SNAPSHOT_RATE;
   pendingClientIds.clear();
   remoteInputs.clear();
@@ -2917,7 +3012,8 @@ async function connectToHostLobby() {
     sendNetworkMessage({
       type: "hello",
       name: "Player",
-      swordTier: permanent.swordTier
+      swordTier: permanent.swordTier,
+      weaponId: permanent.weaponId
     });
   } catch (error) {
     networkStatus = `Connect failed: ${getErrorMessage(error)}`;
@@ -2948,7 +3044,7 @@ function startHostCoopGame() {
   resetMobileControls();
   stopDiscoveryBroadcast();
   mouse.down = false;
-  players = lobbyPlayers.map((lobbyPlayer, index) => createPlayer(lobbyPlayer.id, lobbyPlayer.name, index, lobbyPlayer.swordTier));
+  players = lobbyPlayers.map((lobbyPlayer, index) => createPlayer(lobbyPlayer.id, lobbyPlayer.name, index, lobbyPlayer.swordTier, lobbyPlayer.weaponId));
   player = players.find((activePlayer) => activePlayer.id === localPlayerId) || players[0];
   resetRunState();
   gameState = STATE.PLAYING;
@@ -3022,7 +3118,8 @@ function acceptClientHello(clientId, message) {
   const playerId = `p${playerNumber}`;
   const clientName = message.name && String(message.name).trim() ? String(message.name).trim() : `Player ${playerNumber}`;
   const swordTier = clamp(Math.round(Number(message.swordTier) || 0), 0, SWORD_TIERS.length - 1);
-  const lobbyPlayer = { id: playerId, name: clientName, clientId, swordTier };
+  const weaponId = getWeaponById(message.weaponId).id;
+  const lobbyPlayer = { id: playerId, name: clientName, clientId, swordTier, weaponId };
   lobbyPlayers.push(lobbyPlayer);
   pendingClientIds.delete(clientId);
   clientIdToPlayerId.set(clientId, playerId);
@@ -3198,9 +3295,10 @@ function predictLocalClientPlayer(dt) {
 
   if (input.attackActive && player.attackCooldown <= 0) {
     const swordStats = getSwordStats(player);
+    const weapon = getWeaponDefinition(player);
     const speedMultiplier = player.attackSpeedMultiplier * swordStats.speed;
-    player.attackCooldown = 0.38 / speedMultiplier;
-    player.attackDuration = 0.14 / Math.sqrt(speedMultiplier);
+    player.attackCooldown = weapon.cooldown / speedMultiplier;
+    player.attackDuration = weapon.swingDuration / Math.sqrt(speedMultiplier);
     player.attackTimer = player.attackDuration;
   }
 }
@@ -3312,6 +3410,7 @@ function serializePlayer(activePlayer) {
     connected: activePlayer.connected,
     color: activePlayer.color,
     swordTier: activePlayer.swordTier,
+    weaponId: getWeaponDefinition(activePlayer).id,
     pendingLevelUps: activePlayer.pendingLevelUps || 0,
     activeLevelOffer: activePlayer.activeLevelOffer || null
   };

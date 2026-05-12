@@ -30,20 +30,22 @@ Then visit `http://127.0.0.1:8000`.
 - Each wave adds more pressure through enemy count, speed, and health.
 - Enemy kills award kill points that persist between runs during the current browser session.
 - Spend kill points in the main-menu shop on permanent sword tiers.
+- Use the shop's **Weapon Test Loadout** buttons to try **Balanced Sword**, **Short Sword**, or **Longsword**. Balanced Sword is the default and preserves the original sword feel.
 - If your health reaches zero, the game shows a Game Over screen with your final wave.
 
 ## Local WiFi co-op V1
 
-Co-op uses a host-authoritative local TCP session inside the Android APK. One phone hosts on port `7777`; clients on the same WiFi join by manually entering the host phone's displayed IP address. No PC server, internet service, account, matchmaking, or NAT traversal is used.
+Co-op uses a host-authoritative local TCP session inside the Android APK. One phone hosts on port `7777`; clients on the same WiFi can use auto lobby discovery or manually enter the host phone's displayed IP address. No PC server, internet service, account, matchmaking, or NAT traversal is used.
 
 - Main menu: choose **Host Co-op** on one Android phone.
 - The host lobby displays the phone's local IP and port.
-- Client phones choose **Join Co-op**, tap **Edit IP**, enter the host IP or `IP:port`, then tap **Connect**.
+- Client phones choose **Join Co-op**, tap a discovered lobby, or tap **Edit IP**, enter the host IP or `IP:port`, then tap **Connect**.
 - The host starts the match from the lobby.
 - The host simulates players, enemies, attacks, pickups, XP, waves, and rewards.
 - Clients send movement/aim/attack input and render host snapshots.
+- Weapon selection is sent when a client joins; the host still owns authoritative hit and damage logic.
 - Enemy kills award team-shared kill points. The host saves its reward locally, and clients save reward events locally when received.
-- Auto lobby discovery is intentionally deferred; manual IP join is the supported V1 path.
+- Auto lobby discovery is supported, with manual IP join kept as the fallback.
 
 ## Android debug APK
 
@@ -86,6 +88,7 @@ If Gradle cannot find the Android SDK, install it through Android Studio and set
 - The dungeon walls block both the player and enemies, and enemy chase movement uses a simple flow-field path toward the player.
 - The active shield uses the `Effect_ElectricShield` VFX sprite sheet.
 - Movement and aiming are intentionally independent, so you can move one way while attacking another.
+- Weapon behavior is data-driven in `src/game.js` through definitions with id, display name, damage multiplier, cooldown, range, arc size, and swing duration.
 - The Android wrapper locks the app to fullscreen landscape mode and uses immersive system UI hiding.
 - Add `?debugTouch=1` to the URL in a browser build to show the temporary mobile input debug overlay.
 - Permanent shop upgrades and kill points are saved locally on each device.
