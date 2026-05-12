@@ -14,7 +14,7 @@ Then visit `http://127.0.0.1:8000`.
 
 ## How to play
 
-- Click **Single Player** on the main menu.
+- Choose **Arena**, **Maze**, or **Dungeon** on the main menu, then click **Single Player**.
 - Click **Host Co-op** to host a local WiFi lobby from an Android phone, or **Join Co-op** to manually join a host by IP address.
 - Move with `WASD` or the arrow keys.
 - Aim by moving the mouse cursor.
@@ -26,11 +26,16 @@ Then visit `http://127.0.0.1:8000`.
 - Choose one of three upgrades whenever you level up.
 - Pick up blue shield drops to block one hit.
 - Pick up orange dual-sword drops to attack forward and backward for about 30 seconds.
-- Clear every enemy to advance to the next wave.
-- Each wave adds more pressure through enemy count, speed, and health.
-- Enemy kills award kill points that persist between runs during the current browser session.
-- Spend kill points in the main-menu shop on permanent sword tiers.
-- Use the shop's **Weapon Test Loadout** buttons to try **Balanced Sword**, **Short Sword**, or **Longsword**. Balanced Sword is the default and preserves the original sword feel.
+- Break closed dungeon chests with weapon hits. Most chests drop a fixed XP orb reward; some unlock a weapon or magic skill.
+- Equip up to two magic skills and use the bottom-right magic buttons during a run. Desktop shortcuts are `1`/`Q` and `2`/`E`.
+- In Arena, clear every enemy to advance to the next wave. Each wave adds more pressure through enemy count, speed, and health.
+- In Maze, find the portal on each procedural floor. Floor 5 lets you exit and bank run points or continue to harder floors 6-10 for better rewards.
+- In Dungeon, find the relic, pick it up, then return to the marked exit to bank run points.
+- Arena enemy kills award kill points immediately. Maze and Dungeon run points bank only on successful extraction; death discards only the current run's unbanked points.
+- Spend kill points in the main-menu shop on permanent sword tiers, weapons, and magic skills.
+- Use **Equipment** from the main menu to equip one owned weapon and up to two owned magic skills.
+- Balanced Sword is the free default weapon and preserves the original sword feel. Additional weapons cover fast short-range blades and slower long-range heavy weapons.
+- Magic skills are Fire burn, Water slow, Electric stun, and Ground root. Each has roughly a 10-second cooldown.
 - If your health reaches zero, the game shows a Game Over screen with your final wave.
 
 ## Local WiFi co-op V1
@@ -42,8 +47,9 @@ Co-op uses a host-authoritative local TCP session inside the Android APK. One ph
 - Client phones choose **Join Co-op**, tap a discovered lobby, or tap **Edit IP**, enter the host IP or `IP:port`, then tap **Connect**.
 - The host starts the match from the lobby.
 - The host simulates players, enemies, attacks, pickups, XP, waves, and rewards.
+- The host also owns selected game mode, floor transitions, portals, relic pickup, extraction, chest rewards, magic hit/effect results, and item unlock events; clients only request actions and render synced snapshots.
 - Clients send movement/aim/attack input and render host snapshots.
-- Weapon selection is sent when a client joins; the host still owns authoritative hit and damage logic.
+- Weapon and equipped magic selections are sent when a client joins; the host still owns authoritative hit, damage, magic effect, and reward logic.
 - Enemy kills award team-shared kill points. The host saves its reward locally, and clients save reward events locally when received.
 - Auto lobby discovery is supported, with manual IP join kept as the fallback.
 
@@ -89,6 +95,9 @@ If Gradle cannot find the Android SDK, install it through Android Studio and set
 - The active shield uses the `Effect_ElectricShield` VFX sprite sheet.
 - Movement and aiming are intentionally independent, so you can move one way while attacking another.
 - Weapon behavior is data-driven in `src/game.js` through definitions with id, display name, damage multiplier, cooldown, range, arc size, and swing duration.
+- Weapons and magic unlocks are saved locally with kill points. Equipment loadout is local and is sent to the co-op host on join.
+- Arena uses the authored survival dungeon. Maze uses deterministic procedural maze floors. Dungeon uses a separate relic retrieval layout with an entrance/exit marker.
+- Chests are session-only dungeon entities spawned from safe walkable tiles. Opened chest state is synced in co-op snapshots and is not persisted between runs.
 - The Android wrapper locks the app to fullscreen landscape mode and uses immersive system UI hiding.
 - Add `?debugTouch=1` to the URL in a browser build to show the temporary mobile input debug overlay.
 - Permanent shop upgrades and kill points are saved locally on each device.
