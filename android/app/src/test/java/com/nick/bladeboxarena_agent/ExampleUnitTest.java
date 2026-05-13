@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package com.nick.bladeboxarena_agent;
 
 import static org.junit.Assert.*;
 

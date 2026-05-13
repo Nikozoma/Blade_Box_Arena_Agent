@@ -1,5 +1,5 @@
 {
-  "appId": "com.codextestzone.bladeboxarena",
+  "appId": "com.nick.bladeboxarena_agent",
   "appName": "Blade Box Arena",
   "webDir": "dist",
   "bundledWebRuntime": false,

@@ -1,4 +1,4 @@
-package com.codextestzone.bladeboxarena;
+package com.nick.bladeboxarena_agent;
 
 import android.os.Bundle;
 import android.view.View;

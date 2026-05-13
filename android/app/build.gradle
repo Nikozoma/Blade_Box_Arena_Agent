@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.codextestzone.bladeboxarena"
+    namespace = "com.nick.bladeboxarena_agent"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.codextestzone.bladeboxarena"
+        applicationId "com.nick.bladeboxarena_agent"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

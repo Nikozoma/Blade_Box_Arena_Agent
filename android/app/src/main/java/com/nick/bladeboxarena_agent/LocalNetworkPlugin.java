@@ -1,4 +1,4 @@
-package com.codextestzone.bladeboxarena;
+package com.nick.bladeboxarena_agent;
 
 import android.content.Context;
 import android.net.wifi.WifiManager;

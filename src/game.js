@@ -6,6 +6,10 @@ ctx.imageSmoothingEnabled = false;
 
 const DESIGN_WIDTH = 1280;
 const DESIGN_HEIGHT = 900;
+const DEFAULT_UI_FONT_SCALE = 1.5;
+const FONT_SCALE_OPTIONS = [1, 1.2, 1.4, 1.6, 1.8, 2];
+const MIN_CAMERA_ZOOM = 1;
+const MAX_CAMERA_ZOOM = 2;
 let WIDTH = DESIGN_WIDTH;
 let HEIGHT = DESIGN_HEIGHT;
 let RENDER_SCALE = 1;
@@ -49,12 +53,6 @@ const GAME_MODE_DEFINITIONS = [
   { id: GAME_MODE.ARENA, label: "Arena", detail: "Classic survival waves" },
   { id: GAME_MODE.MAZE, label: "Maze", detail: "Find portals, climb floors" },
   { id: GAME_MODE.DUNGEON, label: "Dungeon", detail: "Recover relic, escape" }
-];
-
-const ZOOM_OPTIONS = [
-  { id: "normal", label: "Normal", scale: 1 },
-  { id: "close", label: "Close 1.5x", scale: 1.5 },
-  { id: "veryClose", label: "Very Close 2x", scale: 2 }
 ];
 
 const SWORD_TIERS = [
@@ -487,7 +485,8 @@ const mobileInput = {
 };
 const NativeLocalNetwork = getNativeLocalNetworkPlugin();
 const settings = {
-  zoom: loadSavedZoom()
+  zoom: loadSavedZoom(),
+  fontScale: loadSavedFontScale()
 };
 
 const permanent = loadPermanentProgress();
@@ -534,6 +533,8 @@ let gameOverButton;
 let settingsButton;
 let magicButtons = [];
 let optionsButtons = [];
+let optionsSliders = [];
+let activeOptionsSlider = null;
 let hostLobbyButtons = {};
 let joinLobbyButtons = {};
 let levelUpButton;
@@ -1978,11 +1979,7 @@ function screenToWorld(x, y) {
 }
 
 function getCameraZoom() {
-  return getZoomOption(settings.zoom).scale;
-}
-
-function getZoomOption(id) {
-  return ZOOM_OPTIONS.find((option) => option.id === id) || ZOOM_OPTIONS[0];
+  return clamp(Number(settings.zoom) || MIN_CAMERA_ZOOM, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
 }
 
 function prepareModeRun(modeId, options = {}) {
@@ -3325,7 +3322,7 @@ function drawPlayer(activePlayer = player) {
 
   if (sessionMode !== SESSION.SINGLE) {
     ctx.fillStyle = playerColor || "#f4f6f8";
-    ctx.font = "800 13px system-ui, sans-serif";
+    setCanvasFont("800 13px system-ui, sans-serif");
     ctx.textAlign = "center";
     ctx.fillText(isArmyVsMode() ? activePlayer.teamLabel || activePlayer.name || activePlayer.id : activePlayer.name || activePlayer.id, activePlayer.x, activePlayer.y - 44);
     ctx.textAlign = "left";
@@ -3530,14 +3527,14 @@ function drawModeChoiceOverlay() {
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 42px system-ui, sans-serif";
+  setCanvasFont("800 42px system-ui, sans-serif");
   ctx.fillText("Floor 5 Portal", WIDTH / 2, HEIGHT / 2 - 108);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText(`Bank ${modeState.runPoints || 0} run points now, or continue to harder floors for better rewards.`, WIDTH / 2, HEIGHT / 2 - 62);
   if (sessionMode === SESSION.CLIENT) {
     ctx.fillStyle = "#ffd166";
-    ctx.font = "800 20px system-ui, sans-serif";
+    setCanvasFont("800 20px system-ui, sans-serif");
     ctx.fillText("Waiting for host choice...", WIDTH / 2, HEIGHT / 2 + 18);
     ctx.restore();
     return;
@@ -3559,7 +3556,7 @@ function drawHud() {
   const xpRatio = clamp(player.xp / player.xpToNext, 0, 1);
 
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText(getModeHudTitle(), 62, 38);
   ctx.fillText(`Enemies ${enemies.length}`, 322, 38);
   ctx.fillText(`Level ${player.level}`, 542, 38);
@@ -3570,7 +3567,7 @@ function drawHud() {
 
   drawBar(62, 50, 230, 16, healthRatio, healthRatio > 0.35 ? "#06d6a0" : "#ef476f");
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "700 12px system-ui, sans-serif";
+  setCanvasFont("700 12px system-ui, sans-serif");
   ctx.fillText(`HP ${Math.ceil(player.health)} / ${player.maxHealth}`, 302, 63);
 
   drawBar(542, 50, 230, 16, xpRatio, "#8de85c");
@@ -3579,10 +3576,10 @@ function drawHud() {
 
   if (currentGameMode !== GAME_MODE.ARENA) {
     ctx.fillStyle = "#ffd166";
-    ctx.font = "800 16px system-ui, sans-serif";
+    setCanvasFont("800 16px system-ui, sans-serif");
     ctx.fillText(`Run Points ${modeState.runPoints || 0}`, 62, 94);
     ctx.fillStyle = "#f4f6f8";
-    ctx.font = "700 15px system-ui, sans-serif";
+    setCanvasFont("700 15px system-ui, sans-serif");
     ctx.fillText(getModeObjectiveText(), 62, 118);
   }
 
@@ -3597,7 +3594,7 @@ function drawHud() {
 
   if (currentGameMode === GAME_MODE.ARENA && enemies.length === 0 && nextWaveTimer > 0) {
     ctx.fillStyle = "rgba(244, 246, 248, 0.86)";
-    ctx.font = "700 24px system-ui, sans-serif";
+    setCanvasFont("700 24px system-ui, sans-serif");
     ctx.textAlign = "center";
     ctx.fillText("Wave cleared", WIDTH / 2, 124);
     ctx.textAlign = "left";
@@ -3621,35 +3618,35 @@ function drawArmyVsHud() {
   ctx.strokeStyle = VS_TEAM_COLORS[VS_TEAM_BLUE];
   ctx.strokeRect(WIDTH - 488, 24, 460, 88);
   ctx.fillStyle = VS_TEAM_COLORS[VS_TEAM_RED];
-  ctx.font = "900 20px system-ui, sans-serif";
+  setCanvasFont("900 20px system-ui, sans-serif");
   ctx.textAlign = "left";
   ctx.fillText("RED ARMY", 48, 54);
   drawBar(48, 66, 250, 16, redHealth, VS_TEAM_COLORS[VS_TEAM_RED]);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 13px system-ui, sans-serif";
+  setCanvasFont("800 13px system-ui, sans-serif");
   ctx.fillText(`HP ${Math.ceil(redPlayer?.health || 0)} / ${redPlayer?.maxHealth || 100}`, 310, 79);
   ctx.fillText(`Army ${getArmyCount(VS_TEAM_RED)}`, 48, 100);
 
   ctx.textAlign = "right";
   ctx.fillStyle = VS_TEAM_COLORS[VS_TEAM_BLUE];
-  ctx.font = "900 20px system-ui, sans-serif";
+  setCanvasFont("900 20px system-ui, sans-serif");
   ctx.fillText("BLUE ARMY", WIDTH - 48, 54);
   drawBar(WIDTH - 298, 66, 250, 16, blueHealth, VS_TEAM_COLORS[VS_TEAM_BLUE]);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 13px system-ui, sans-serif";
+  setCanvasFont("800 13px system-ui, sans-serif");
   ctx.fillText(`HP ${Math.ceil(bluePlayer?.health || 0)} / ${bluePlayer?.maxHealth || 100}`, WIDTH - 310, 79);
   ctx.fillText(`Army ${getArmyCount(VS_TEAM_BLUE)}`, WIDTH - 48, 100);
 
   ctx.textAlign = "center";
   const countdown = Math.ceil(modeState.reinforcementTimer || 0);
   ctx.fillStyle = countdown <= 5 ? "#ffd166" : "#f4f6f8";
-  ctx.font = "900 22px system-ui, sans-serif";
+  setCanvasFont("900 22px system-ui, sans-serif");
   ctx.fillText(`Army Wave ${modeState.armyWave || 1}`, WIDTH / 2, 48);
-  ctx.font = "800 16px system-ui, sans-serif";
+  setCanvasFont("800 16px system-ui, sans-serif");
   ctx.fillText(countdown <= 5 ? `Reinforcements incoming: ${countdown}` : `Next reinforcements: ${countdown}s`, WIDTH / 2, 76);
   if (sessionMode !== SESSION.SINGLE) {
     ctx.fillStyle = "#cbd5df";
-    ctx.font = "700 13px system-ui, sans-serif";
+    setCanvasFont("700 13px system-ui, sans-serif");
     ctx.fillText(sessionMode === SESSION.HOST ? "Host authoritative VS" : "Client rendering host VS", WIDTH / 2, 99);
   }
   ctx.restore();
@@ -3670,12 +3667,12 @@ function drawBossHealthBar() {
   ctx.lineWidth = 2;
   ctx.strokeRect(x - 12, y - 30, width + 24, 58);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "900 16px system-ui, sans-serif";
+  setCanvasFont("900 16px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.fillText(boss.bossName || BOSS_NAME, WIDTH / 2, y - 10);
   drawBar(x, y, width, height, ratio, "#ff4f7a");
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 12px system-ui, sans-serif";
+  setCanvasFont("800 12px system-ui, sans-serif");
   ctx.fillText(`${Math.ceil(boss.health)} / ${boss.maxHealth}`, WIDTH / 2, y + 13);
   ctx.textAlign = "left";
   ctx.restore();
@@ -3693,7 +3690,7 @@ function drawMobileControls() {
   ctx.fillStyle = "rgba(8, 11, 16, 0.72)";
   ctx.fillRect(18, HEIGHT - 120, 340, 102);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "600 14px system-ui, sans-serif";
+  setCanvasFont("600 14px system-ui, sans-serif");
   ctx.fillText(`Move ${mobileInput.move.vectorX.toFixed(2)}, ${mobileInput.move.vectorY.toFixed(2)}`, 30, HEIGHT - 108);
   ctx.fillText(`Aim ${mobileInput.aim.vectorX.toFixed(2)}, ${mobileInput.aim.vectorY.toFixed(2)}`, 30, HEIGHT - 84);
   ctx.fillText(`Attacking ${mobileInput.attackActive ? "true" : "false"}`, 30, HEIGHT - 60);
@@ -3731,12 +3728,12 @@ function drawMagicButtons() {
       ctx.fillRect(x, y + size - fillHeight, size, fillHeight);
     }
     ctx.fillStyle = ready ? magic.color : "#aab4bf";
-    ctx.font = "900 15px system-ui, sans-serif";
+    setCanvasFont("900 15px system-ui, sans-serif");
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(magic.shortName, x + size / 2, y + 27);
     ctx.fillStyle = "#f4f6f8";
-    ctx.font = "800 13px system-ui, sans-serif";
+    setCanvasFont("800 13px system-ui, sans-serif");
     ctx.fillText(ready ? `${i + 1}` : `${Math.ceil(cooldown)}s`, x + size / 2, y + 53);
     ctx.restore();
     magicButtons.push({ x, y, width: size, height: size, slot: i });
@@ -3781,11 +3778,11 @@ function drawCoopLevelUpButton() {
   ctx.lineWidth = 3;
   ctx.strokeRect(x, y, size, size);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "900 25px system-ui, sans-serif";
+  setCanvasFont("900 25px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("UP", x + size / 2, y + 30);
-  ctx.font = "800 16px system-ui, sans-serif";
+  setCanvasFont("800 16px system-ui, sans-serif");
   ctx.fillText(`x${pending}`, x + size / 2, y + 54);
   ctx.restore();
 }
@@ -3804,7 +3801,7 @@ function drawSettingsButton() {
   ctx.lineWidth = 3;
   ctx.strokeRect(x, y, size, size);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "700 26px system-ui, sans-serif";
+  setCanvasFont("700 26px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("⚙", x + size / 2, y + size / 2 + 1);
@@ -3842,12 +3839,13 @@ function drawGearGlyph(centerX, centerY, radius) {
 
 function drawOptionsMenu() {
   optionsButtons = [];
+  optionsSliders = [];
   ctx.save();
   ctx.fillStyle = "rgba(8, 11, 16, 0.76)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
   const panelWidth = 520;
-  const panelHeight = 430;
+  const panelHeight = 500;
   const x = WIDTH / 2 - panelWidth / 2;
   const y = HEIGHT / 2 - panelHeight / 2;
   ctx.fillStyle = "#202832";
@@ -3858,30 +3856,64 @@ function drawOptionsMenu() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 40px system-ui, sans-serif";
+  setCanvasFont("800 40px system-ui, sans-serif");
   ctx.fillText("Options", WIDTH / 2, y + 66);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 18px system-ui, sans-serif";
+  setCanvasFont("600 18px system-ui, sans-serif");
   ctx.fillText("Camera Zoom", WIDTH / 2, y + 112);
+  drawOptionSlider("zoom", WIDTH / 2 - 190, y + 142, 380, 34, settings.zoom, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM, false, `${getCameraZoom().toFixed(2)}x`);
 
-  const buttonWidth = 150;
-  const buttonHeight = 50;
-  const gap = 18;
-  const startX = WIDTH / 2 - (buttonWidth * ZOOM_OPTIONS.length + gap * (ZOOM_OPTIONS.length - 1)) / 2;
-  for (let i = 0; i < ZOOM_OPTIONS.length; i += 1) {
-    const option = ZOOM_OPTIONS[i];
-    const selected = settings.zoom === option.id;
-    drawOptionButton(startX + i * (buttonWidth + gap), y + 142, buttonWidth, buttonHeight, option.label, selected, () => {
-      setZoom(option.id);
-    });
-  }
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont("600 18px system-ui, sans-serif");
+  ctx.fillText("Font Scale", WIDTH / 2, y + 220);
+  drawOptionSlider("fontScale", WIDTH / 2 - 190, y + 250, 380, 34, settings.fontScale, 1, 2, true, `${Math.round(settings.fontScale * 100)}%`);
 
   const closeLabel = previousGameState === STATE.MENU ? "Back to Menu" : "Resume";
-  drawOptionButton(WIDTH / 2 - 170, y + 240, 340, 54, closeLabel, false, closeOptionsMenu);
+  drawOptionButton(WIDTH / 2 - 170, y + 340, 340, 54, closeLabel, false, closeOptionsMenu);
   if (previousGameState === STATE.PLAYING) {
-    drawOptionButton(WIDTH / 2 - 170, y + 312, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
+    drawOptionButton(WIDTH / 2 - 170, y + 412, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
   }
   ctx.restore();
+}
+
+function drawOptionSlider(id, x, y, width, height, value, min, max, stepped, label) {
+  const ratio = clamp((value - min) / (max - min), 0, 1);
+  const trackY = y + height / 2;
+  const knobX = x + width * ratio;
+  ctx.save();
+  ctx.strokeStyle = "#5d6e7e";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x, trackY);
+  ctx.lineTo(x + width, trackY);
+  ctx.stroke();
+  ctx.strokeStyle = "#75d7ff";
+  ctx.beginPath();
+  ctx.moveTo(x, trackY);
+  ctx.lineTo(knobX, trackY);
+  ctx.stroke();
+  if (stepped) {
+    for (const option of FONT_SCALE_OPTIONS) {
+      const tickRatio = (option - min) / (max - min);
+      const tickX = x + width * tickRatio;
+      ctx.fillStyle = "#cbd5df";
+      ctx.fillRect(tickX - 2, trackY - 13, 4, 26);
+    }
+  }
+  ctx.fillStyle = "#f4f6f8";
+  ctx.beginPath();
+  ctx.arc(knobX, trackY, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#111418";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont("800 16px system-ui, sans-serif");
+  ctx.textAlign = "center";
+  ctx.fillText(label, x + width / 2, y + height + 30);
+  ctx.restore();
+  optionsSliders.push({ id, x: x - 24, y: y - 18, width: width + 48, height: height + 50, trackX: x, trackWidth: width, min, max, stepped });
 }
 
 function drawOptionButton(x, y, width, height, label, selected, action) {
@@ -3892,7 +3924,7 @@ function drawOptionButton(x, y, width, height, label, selected, action) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = selected ? "#101216" : hovered ? "#101216" : "#f4f6f8";
-  ctx.font = "800 17px system-ui, sans-serif";
+  setCanvasFont("800 17px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
@@ -3939,10 +3971,15 @@ function drawStatusPill(x, y, width, text, color) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, 24);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "700 13px system-ui, sans-serif";
+  setCanvasFont("700 13px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.fillText(text, x + width / 2, y + 16);
   ctx.textAlign = "left";
+}
+
+function setCanvasFont(font) {
+  const scale = clamp(Number(settings.fontScale) || DEFAULT_UI_FONT_SCALE, 1, 2);
+  ctx.font = String(font).replace(/(\d+(?:\.\d+)?)px/, (match, size) => `${Math.round(Number(size) * scale)}px`);
 }
 
 function formatMultiplier(value) {
@@ -3965,20 +4002,20 @@ function drawMenu() {
   drawArenaPreview();
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 62px system-ui, sans-serif";
+  setCanvasFont("800 62px system-ui, sans-serif");
   ctx.fillText("Blade Box Arena", WIDTH / 2, 236);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "500 20px system-ui, sans-serif";
+  setCanvasFont("500 20px system-ui, sans-serif");
   ctx.fillText("Collect XP, choose upgrades, bank kill points, and push deeper waves.", WIDTH / 2, 280);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   const equippedMagic = getEquippedMagicDefinitions().map((magic) => magic.name).join(" / ") || "No Magic";
   ctx.fillText(`Kill Points: ${permanent.killPoints}   Sword: ${SWORD_TIERS[permanent.swordTier].name}   Weapon: ${getSelectedWeapon().name}`, WIDTH / 2, 326);
-  ctx.font = "700 17px system-ui, sans-serif";
+  setCanvasFont("700 17px system-ui, sans-serif");
   ctx.fillText(`Magic: ${equippedMagic}`, WIDTH / 2, 354);
 
   modeButtons = [];
-  ctx.font = "800 18px system-ui, sans-serif";
+  setCanvasFont("800 18px system-ui, sans-serif");
   ctx.fillStyle = "#f4f6f8";
   ctx.fillText("Game Mode", WIDTH / 2, 392);
   const playableModes = GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS);
@@ -3987,7 +4024,7 @@ function drawMenu() {
     const x = WIDTH / 2 - 330 + i * 230;
     const button = drawToggleButton(x, 410, 200, 50, mode.label, selectedGameMode === mode.id);
     ctx.fillStyle = selectedGameMode === mode.id ? "#f4f6f8" : "#cbd5df";
-    ctx.font = "600 12px system-ui, sans-serif";
+    setCanvasFont("600 12px system-ui, sans-serif");
     ctx.fillText(mode.detail, x + 100, 474);
     modeButtons.push({ ...button, modeId: mode.id });
   }
@@ -4036,20 +4073,20 @@ function drawHostLobby() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 50px system-ui, sans-serif";
+  setCanvasFont("800 50px system-ui, sans-serif");
   ctx.fillText(selectedGameMode === GAME_MODE.ARMY_VS ? "Host Army VS Lobby" : "Host Co-op Lobby", WIDTH / 2, 170);
-  ctx.font = "700 22px system-ui, sans-serif";
+  setCanvasFont("700 22px system-ui, sans-serif");
   ctx.fillStyle = "#75d7ff";
   ctx.fillText(`${hostIpAddress}:${NETWORK_PORT}`, WIDTH / 2, 214);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 17px system-ui, sans-serif";
+  setCanvasFont("600 17px system-ui, sans-serif");
   ctx.fillText(networkStatus, WIDTH / 2, 248);
   ctx.fillStyle = "#ffd166";
-  ctx.font = "800 18px system-ui, sans-serif";
+  setCanvasFont("800 18px system-ui, sans-serif");
   ctx.fillText(`Mode: ${getGameModeDefinition(selectedGameMode).label}`, WIDTH / 2, 272);
   if (selectedGameMode === GAME_MODE.ARMY_VS) {
     ctx.fillStyle = "#cbd5df";
-    ctx.font = "700 15px system-ui, sans-serif";
+    setCanvasFont("700 15px system-ui, sans-serif");
     ctx.fillText("2-player PvPvE: RED host vs BLUE client", WIDTH / 2, 296);
   }
 
@@ -4059,11 +4096,11 @@ function drawHostLobby() {
   ctx.lineWidth = 2;
   ctx.strokeRect(WIDTH / 2 - 260, 282, 520, 270);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   const maxLobbyPlayers = getLobbyMaxPlayers();
   ctx.fillText(`Players ${lobbyPlayers.length} / ${maxLobbyPlayers}`, WIDTH / 2, 326);
 
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   for (let i = 0; i < maxLobbyPlayers; i += 1) {
     const lobbyPlayer = lobbyPlayers[i];
     const teamLabel = selectedGameMode === GAME_MODE.ARMY_VS ? (i === 0 ? "RED ARMY" : "BLUE ARMY") : `P${i + 1}`;
@@ -4073,7 +4110,7 @@ function drawHostLobby() {
   }
 
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "700 16px system-ui, sans-serif";
+  setCanvasFont("700 16px system-ui, sans-serif");
   ctx.fillText("Host Snapshot Rate", WIDTH / 2, 584);
   hostLobbyButtons.rate45 = drawToggleButton(WIDTH / 2 - 185, 604, 170, 48, "45Hz Default", hostSnapshotRate === 45);
   hostLobbyButtons.rate60 = drawToggleButton(WIDTH / 2 + 15, 604, 170, 48, "60Hz Smooth", hostSnapshotRate === 60);
@@ -4091,14 +4128,14 @@ function drawJoinLobby() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 50px system-ui, sans-serif";
+  setCanvasFont("800 50px system-ui, sans-serif");
   ctx.fillText("Join Co-op Lobby", WIDTH / 2, 170);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 18px system-ui, sans-serif";
+  setCanvasFont("600 18px system-ui, sans-serif");
   ctx.fillText("Select a discovered lobby or use manual IP join.", WIDTH / 2, 214);
   ctx.fillText(`Host: ${joinHostAddress || "Tap Edit IP"}:${joinPort}`, WIDTH / 2, 252);
   ctx.fillStyle = "#75d7ff";
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText(networkStatus, WIDTH / 2, 288);
 
   joinLobbyButtons.edit = drawButton(WIDTH / 2 - 320, 340, 190, 56, "Edit IP");
@@ -4107,12 +4144,12 @@ function drawJoinLobby() {
   joinLobbyButtons.discovered = [];
 
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   ctx.fillText("Discovered Lobbies", WIDTH / 2, 456);
   const visibleLobbies = getVisibleDiscoveredLobbies();
   if (visibleLobbies.length === 0) {
     ctx.fillStyle = "#9aa7b4";
-    ctx.font = "700 17px system-ui, sans-serif";
+    setCanvasFont("700 17px system-ui, sans-serif");
     ctx.fillText(NativeLocalNetwork ? "Searching local WiFi..." : "Android APK required for auto search", WIDTH / 2, 500);
   } else {
     for (let i = 0; i < Math.min(visibleLobbies.length, 4); i += 1) {
@@ -4124,9 +4161,9 @@ function drawJoinLobby() {
 
   if (lobbyPlayers.length > 0) {
     ctx.fillStyle = "#f4f6f8";
-    ctx.font = "800 22px system-ui, sans-serif";
+    setCanvasFont("800 22px system-ui, sans-serif");
     ctx.fillText("Lobby Players", WIDTH / 2, 730);
-    ctx.font = "700 18px system-ui, sans-serif";
+    setCanvasFont("700 18px system-ui, sans-serif");
     for (let i = 0; i < lobbyPlayers.length; i += 1) {
       ctx.fillStyle = PLAYER_COLORS[i] || "#f4f6f8";
       ctx.fillText(`${lobbyPlayers[i].id.toUpperCase()}  ${lobbyPlayers[i].name}`, WIDTH / 2, 768 + i * 32);
@@ -4142,9 +4179,9 @@ function drawShop() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 52px system-ui, sans-serif";
+  setCanvasFont("800 52px system-ui, sans-serif");
   ctx.fillText("Shop", WIDTH / 2, 150);
-  ctx.font = "700 22px system-ui, sans-serif";
+  setCanvasFont("700 22px system-ui, sans-serif");
   ctx.fillText(`Kill Points: ${permanent.killPoints}`, WIDTH / 2, 190);
 
   shopPurchaseButtons = [];
@@ -4177,9 +4214,9 @@ function drawShopTier(x, y, tier) {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 24px system-ui, sans-serif";
+  setCanvasFont("800 24px system-ui, sans-serif");
   ctx.fillText(upgrade.name, x + 140, y + 48);
-  ctx.font = "600 17px system-ui, sans-serif";
+  setCanvasFont("600 17px system-ui, sans-serif");
   ctx.fillStyle = "#cbd5df";
   ctx.fillText(`${upgrade.damage}x sword damage`, x + 140, y + 104);
   ctx.fillText(`${upgrade.speed}x swing speed`, x + 140, y + 136);
@@ -4197,10 +4234,10 @@ function drawShopTier(x, y, tier) {
 function drawWeaponSelector(x, y) {
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   ctx.fillText("Weapons", WIDTH / 2, y);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 15px system-ui, sans-serif";
+  setCanvasFont("600 15px system-ui, sans-serif");
   ctx.fillText("Buy here, equip from Equipment.", WIDTH / 2, y + 24);
 
   for (let i = 0; i < WEAPON_DEFINITIONS.length; i += 1) {
@@ -4214,7 +4251,7 @@ function drawWeaponSelector(x, y) {
     const label = owned ? weapon.name : `${weapon.name} ${weapon.cost}`;
     const button = drawToggleButton(buttonX, buttonY, 202, 44, label, owned);
     ctx.fillStyle = owned ? "#8de85c" : affordable ? "#cbd5df" : "#7b8a99";
-    ctx.font = "600 11px system-ui, sans-serif";
+    setCanvasFont("600 11px system-ui, sans-serif");
     ctx.fillText(`${weapon.category}  ${formatMultiplier(weapon.damageMultiplier)}  ${weapon.range}`, buttonX + 101, buttonY + 58);
     weaponSelectButtons.push({ ...button, weaponId: weapon.id, canBuy: !owned && affordable });
   }
@@ -4223,7 +4260,7 @@ function drawWeaponSelector(x, y) {
 function drawMagicShop(x, y) {
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   ctx.fillText("Magic", WIDTH / 2, y);
   for (let i = 0; i < MAGIC_DEFINITIONS.length; i += 1) {
     const magic = MAGIC_DEFINITIONS[i];
@@ -4233,7 +4270,7 @@ function drawMagicShop(x, y) {
     const label = owned ? magic.name : `${magic.name} ${magic.cost}`;
     const button = drawToggleButton(buttonX, y + 32, 202, 46, label, owned);
     ctx.fillStyle = owned ? magic.color : affordable ? "#cbd5df" : "#7b8a99";
-    ctx.font = "600 12px system-ui, sans-serif";
+    setCanvasFont("600 12px system-ui, sans-serif");
     ctx.fillText(truncateText(magic.description, 25), buttonX + 101, y + 96);
     magicPurchaseButtons.push({ ...button, magicId: magic.id, canBuy: !owned && affordable });
   }
@@ -4245,9 +4282,9 @@ function drawEquipment() {
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 52px system-ui, sans-serif";
+  setCanvasFont("800 52px system-ui, sans-serif");
   ctx.fillText("Equipment", WIDTH / 2, 148);
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillStyle = "#cbd5df";
   ctx.fillText("Equip one weapon and up to two magic skills.", WIDTH / 2, 184);
 
@@ -4255,7 +4292,7 @@ function drawEquipment() {
   equipmentMagicButtons = [];
   const weaponX = WIDTH / 2 - 540;
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 24px system-ui, sans-serif";
+  setCanvasFont("800 24px system-ui, sans-serif");
   ctx.fillText("Weapons", WIDTH / 2, 232);
   for (let i = 0; i < WEAPON_DEFINITIONS.length; i += 1) {
     const weapon = WEAPON_DEFINITIONS[i];
@@ -4270,7 +4307,7 @@ function drawEquipment() {
   }
 
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 24px system-ui, sans-serif";
+  setCanvasFont("800 24px system-ui, sans-serif");
   ctx.fillText("Magic", WIDTH / 2, 512);
   const magicX = WIDTH / 2 - 432;
   for (let i = 0; i < MAGIC_DEFINITIONS.length; i += 1) {
@@ -4285,7 +4322,7 @@ function drawEquipment() {
 
   const magicNames = getEquippedMagicDefinitions().map((magic) => magic.name).join(" / ") || "None";
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "700 17px system-ui, sans-serif";
+  setCanvasFont("700 17px system-ui, sans-serif");
   ctx.fillText(`Equipped Magic: ${magicNames}`, WIDTH / 2, 684);
   equipmentBackButton = drawButton(WIDTH / 2 - 105, 736, 210, 54, "Back");
   ctx.textAlign = "left";
@@ -4299,10 +4336,10 @@ function drawEquipmentCard(x, y, width, height, title, detail, equipped, owned, 
   ctx.lineWidth = equipped ? 3 : 2;
   ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = owned ? "#f4f6f8" : "#8d98a5";
-  ctx.font = "800 16px system-ui, sans-serif";
+  setCanvasFont("800 16px system-ui, sans-serif");
   ctx.fillText(title, x + width / 2, y + 25);
   ctx.fillStyle = equipped ? accent : owned ? "#cbd5df" : "#7b8a99";
-  ctx.font = "600 11px system-ui, sans-serif";
+  setCanvasFont("600 11px system-ui, sans-serif");
   ctx.fillText(equipped ? "Equipped" : truncateText(detail, 26), x + width / 2, y + height - 18);
 }
 
@@ -4312,10 +4349,10 @@ function drawRecords() {
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 52px system-ui, sans-serif";
+  setCanvasFont("800 52px system-ui, sans-serif");
   ctx.fillText("Records", WIDTH / 2, 142);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText("Persistent local run history and high scores", WIDTH / 2, 178);
 
   const panelX = WIDTH / 2 - 500;
@@ -4341,7 +4378,7 @@ function drawRecords() {
     ["Best Damage Dealt", Math.round(records.bestDamageDealt)]
   ];
 
-  ctx.font = "800 19px system-ui, sans-serif";
+  setCanvasFont("800 19px system-ui, sans-serif");
   for (let i = 0; i < rows.length; i += 1) {
     const col = i % 2;
     const row = Math.floor(i / 2);
@@ -4351,23 +4388,23 @@ function drawRecords() {
     ctx.fillStyle = "#9aa7b4";
     ctx.fillText(rows[i][0], x, y);
     ctx.fillStyle = "#f4f6f8";
-    ctx.font = "900 28px system-ui, sans-serif";
+    setCanvasFont("900 28px system-ui, sans-serif");
     ctx.fillText(String(rows[i][1]), x, y + 32);
-    ctx.font = "800 19px system-ui, sans-serif";
+    setCanvasFont("800 19px system-ui, sans-serif");
   }
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#ffd166";
-  ctx.font = "800 18px system-ui, sans-serif";
+  setCanvasFont("800 18px system-ui, sans-serif");
   ctx.fillText("Recent Runs", WIDTH / 2, 608);
   const recentRuns = (records.recentRuns || []).slice(0, 3);
   if (recentRuns.length === 0) {
     ctx.fillStyle = "#9aa7b4";
-    ctx.font = "700 15px system-ui, sans-serif";
+    setCanvasFont("700 15px system-ui, sans-serif");
     ctx.fillText("No completed runs recorded yet.", WIDTH / 2, 638);
   } else {
     ctx.fillStyle = "#cbd5df";
-    ctx.font = "700 15px system-ui, sans-serif";
+    setCanvasFont("700 15px system-ui, sans-serif");
     for (let i = 0; i < recentRuns.length; i += 1) {
       const run = recentRuns[i];
       ctx.fillText(`${run.mode} - ${run.result} - ${formatDuration(run.duration)} - Kills ${run.kills} - Bosses ${run.bossKills}`, WIDTH / 2, 636 + i * 24);
@@ -4384,10 +4421,10 @@ function drawLevelUp() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 50px system-ui, sans-serif";
+  setCanvasFont("800 50px system-ui, sans-serif");
   ctx.fillText("Level Up", WIDTH / 2, 210);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 19px system-ui, sans-serif";
+  setCanvasFont("600 19px system-ui, sans-serif");
   ctx.fillText("Choose one upgrade", WIDTH / 2, 248);
 
   levelUpButtons = [];
@@ -4401,10 +4438,10 @@ function drawLevelUp() {
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, 280, 220);
     ctx.fillStyle = "#f4f6f8";
-    ctx.font = "800 22px system-ui, sans-serif";
+    setCanvasFont("800 22px system-ui, sans-serif");
     ctx.fillText(levelUpChoices[i].title, x + 140, y + 62);
     ctx.fillStyle = "#cbd5df";
-    ctx.font = "600 16px system-ui, sans-serif";
+    setCanvasFont("600 16px system-ui, sans-serif");
     ctx.fillText(levelUpChoices[i].detail, x + 140, y + 112);
     const button = drawButton(x + 65, y + 150, 150, 46, "Choose");
     levelUpButtons.push({ ...button, upgrade: levelUpChoices[i] });
@@ -4422,10 +4459,10 @@ function drawGameOver() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 54px system-ui, sans-serif";
+  setCanvasFont("800 54px system-ui, sans-serif");
   ctx.fillText(lastRunSummary?.heading || "Game Over", WIDTH / 2, 170);
   ctx.fillStyle = lastRunSummary?.success ? "#8de85c" : "#ffd166";
-  ctx.font = "800 24px system-ui, sans-serif";
+  setCanvasFont("800 24px system-ui, sans-serif");
   ctx.fillText(lastRunSummary?.resultLabel || "Run ended", WIDTH / 2, 214);
 
   const summary = lastRunSummary || createRunSummary("failed", "Run ended", { bankedPoints: 0, lostRunPoints: modeState?.lostRunPoints || 0 }, false);
@@ -4437,7 +4474,7 @@ function drawGameOver() {
   ctx.strokeStyle = summary.success ? "#8de85c" : "#ff4f7a";
   ctx.lineWidth = 2;
   ctx.strokeRect(panelX, panelY, 860, 332);
-  ctx.font = "800 18px system-ui, sans-serif";
+  setCanvasFont("800 18px system-ui, sans-serif");
   for (let i = 0; i < rows.length; i += 1) {
     const col = i % 2;
     const row = Math.floor(i / 2);
@@ -4447,15 +4484,15 @@ function drawGameOver() {
     ctx.fillStyle = "#9aa7b4";
     ctx.fillText(rows[i].label, x, y);
     ctx.fillStyle = rows[i].record ? "#ffd166" : "#f4f6f8";
-    ctx.font = "900 22px system-ui, sans-serif";
+    setCanvasFont("900 22px system-ui, sans-serif");
     ctx.fillText(rows[i].value, x, y + 25);
-    ctx.font = "800 18px system-ui, sans-serif";
+    setCanvasFont("800 18px system-ui, sans-serif");
   }
 
   if (summary.records.length > 0) {
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffd166";
-    ctx.font = "800 18px system-ui, sans-serif";
+    setCanvasFont("800 18px system-ui, sans-serif");
     ctx.fillText(`New Record: ${summary.records.join(" / ")}`, WIDTH / 2, 628);
   }
 
@@ -4470,14 +4507,14 @@ function drawArmyVsGameOver() {
   const winnerColor = VS_TEAM_COLORS[winnerTeam] || "#ffd166";
   ctx.textAlign = "center";
   ctx.fillStyle = winnerColor;
-  ctx.font = "900 64px system-ui, sans-serif";
+  setCanvasFont("900 64px system-ui, sans-serif");
   ctx.fillText(modeState.winnerLabel || "ARMY VS COMPLETE", WIDTH / 2, 278);
   ctx.fillStyle = "#cbd5df";
-  ctx.font = "800 22px system-ui, sans-serif";
+  setCanvasFont("800 22px system-ui, sans-serif");
   ctx.fillText(`Final Army Wave ${modeState.armyWave || 1}`, WIDTH / 2, 334);
   ctx.fillText(`RED Army ${getArmyCount(VS_TEAM_RED)}  vs  BLUE Army ${getArmyCount(VS_TEAM_BLUE)}`, WIDTH / 2, 370);
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "700 18px system-ui, sans-serif";
+  setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText("No survival rewards are awarded in Army VS.", WIDTH / 2, 416);
   gameOverButton = drawButton(WIDTH / 2 - 130, 472, 260, 54, "Return to Menu");
   ctx.textAlign = "left";
@@ -4491,7 +4528,7 @@ function drawButton(x, y, width, height, label, disabled = false) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = disabled ? "#2f3742" : "#111418";
-  ctx.font = "800 18px system-ui, sans-serif";
+  setCanvasFont("800 18px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
@@ -4507,7 +4544,7 @@ function drawToggleButton(x, y, width, height, label, selected) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = selected || hovered ? "#101216" : "#f4f6f8";
-  ctx.font = "800 16px system-ui, sans-serif";
+  setCanvasFont("800 16px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
@@ -4634,6 +4671,13 @@ function handleCanvasClick() {
   }
 
   if (gameState === STATE.OPTIONS) {
+    for (const slider of optionsSliders) {
+      if (pointInRect(mouse.x, mouse.y, slider.x, slider.y, slider.width, slider.height)) {
+        activeOptionsSlider = slider;
+        updateOptionSliderFromPoint(slider, mouse.x);
+        return;
+      }
+    }
     for (const button of optionsButtons) {
       if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
         mouse.down = false;
@@ -4866,6 +4910,19 @@ function handlePointerDown(event) {
   event.preventDefault();
   updateMousePosition(event);
 
+  if (gameState === STATE.OPTIONS) {
+    handleCanvasClick();
+    if (activeOptionsSlider) {
+      activeOptionsSlider.pointerId = event.pointerId;
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Pointer capture is a nicety, not a hard dependency.
+      }
+    }
+    return;
+  }
+
   if (coopLevelMenuOpen) {
     handleCanvasClick();
     return;
@@ -4908,6 +4965,14 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!isTouchPointer(event)) return;
+  if (gameState === STATE.OPTIONS && activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
+    event.preventDefault();
+    const point = getCanvasPoint(event);
+    mouse.x = point.x;
+    mouse.y = point.y;
+    updateOptionSliderFromPoint(activeOptionsSlider, mouse.x);
+    return;
+  }
   if (event.pointerId !== mobileInput.move.pointerId && event.pointerId !== mobileInput.aim.pointerId) return;
 
   event.preventDefault();
@@ -4924,6 +4989,12 @@ function handlePointerEnd(event) {
   if (!isTouchPointer(event)) return;
   event.preventDefault();
 
+  if (activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
+    activeOptionsSlider = null;
+    mouse.down = false;
+    return;
+  }
+
   if (event.pointerId === mobileInput.move.pointerId) {
     resetJoystick(mobileInput.move);
   }
@@ -4934,6 +5005,9 @@ function handlePointerEnd(event) {
 }
 
 function handleLostPointerCapture(event) {
+  if (activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
+    activeOptionsSlider = null;
+  }
   if (event.pointerId === mobileInput.move.pointerId) {
     resetJoystick(mobileInput.move);
   }
@@ -5154,6 +5228,7 @@ function openOptionsMenu() {
 function closeOptionsMenu() {
   resetMobileControls();
   mouse.down = false;
+  activeOptionsSlider = null;
   if (previousGameState === STATE.PLAYING && player && player.health > 0) {
     updateCamera();
     gameState = STATE.PLAYING;
@@ -5162,9 +5237,9 @@ function closeOptionsMenu() {
   }
 }
 
-function setZoom(id) {
-  settings.zoom = getZoomOption(id).id;
-  saveZoomSetting();
+function setZoom(value) {
+  settings.zoom = clamp(Number(value) || MIN_CAMERA_ZOOM, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
+  saveDisplaySettings();
   if (player) {
     updateCamera();
   }
@@ -5173,17 +5248,49 @@ function setZoom(id) {
 function loadSavedZoom() {
   try {
     const stored = localStorage.getItem("bladeBoxArena.cameraZoom");
-    return getZoomOption(stored).id;
+    if (stored === "normal") return 1;
+    if (stored === "close") return 1.5;
+    if (stored === "veryClose") return 2;
+    return clamp(Number(stored) || MIN_CAMERA_ZOOM, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
   } catch (error) {
-    return ZOOM_OPTIONS[0].id;
+    return MIN_CAMERA_ZOOM;
   }
 }
 
-function saveZoomSetting() {
+function setFontScale(value) {
+  settings.fontScale = getNearestFontScale(value);
+  saveDisplaySettings();
+}
+
+function loadSavedFontScale() {
+  try {
+    return getNearestFontScale(Number(localStorage.getItem("bladeBoxArena.fontScale")) || DEFAULT_UI_FONT_SCALE);
+  } catch (error) {
+    return DEFAULT_UI_FONT_SCALE;
+  }
+}
+
+function getNearestFontScale(value) {
+  const target = clamp(Number(value) || DEFAULT_UI_FONT_SCALE, 1, 2);
+  return FONT_SCALE_OPTIONS.reduce((best, option) => Math.abs(option - target) < Math.abs(best - target) ? option : best, FONT_SCALE_OPTIONS[0]);
+}
+
+function saveDisplaySettings() {
   try {
     localStorage.setItem("bladeBoxArena.cameraZoom", settings.zoom);
+    localStorage.setItem("bladeBoxArena.fontScale", settings.fontScale);
   } catch (error) {
     // Local storage is optional; gameplay should continue without it.
+  }
+}
+
+function updateOptionSliderFromPoint(slider, x) {
+  const ratio = clamp((x - slider.trackX) / slider.trackWidth, 0, 1);
+  const value = slider.min + ratio * (slider.max - slider.min);
+  if (slider.id === "zoom") {
+    setZoom(value);
+  } else if (slider.id === "fontScale") {
+    setFontScale(value);
   }
 }
 
@@ -6109,6 +6216,9 @@ function updateMousePosition(event) {
   const point = getCanvasPoint(event);
   mouse.x = point.x;
   mouse.y = point.y;
+  if (gameState === STATE.OPTIONS && activeOptionsSlider && mouse.down) {
+    updateOptionSliderFromPoint(activeOptionsSlider, mouse.x);
+  }
 }
 
 function getCanvasPoint(event) {
@@ -6161,6 +6271,7 @@ canvas.addEventListener("lostpointercapture", handleLostPointerCapture);
 
 window.addEventListener("mouseup", () => {
   mouse.down = false;
+  activeOptionsSlider = null;
 });
 window.addEventListener("resize", () => {
   if (resizeCanvasToDisplaySize()) {
