@@ -1787,8 +1787,51 @@ function applyModeMap(nextModeState) {
 }
 
 function getPlayerSpawnTile(spawnIndex = 0) {
+  if (currentGameMode === GAME_MODE.ARENA) {
+    return PLAYER_SPAWNS[spawnIndex % PLAYER_SPAWNS.length] || PLAYER_SPAWNS[0];
+  }
+  const safeSpawns = getSafeModeSpawnTiles();
+  if (safeSpawns.length > 0) {
+    return safeSpawns[spawnIndex % safeSpawns.length];
+  }
   const spawns = Array.isArray(modeState.spawnTiles) && modeState.spawnTiles.length > 0 ? modeState.spawnTiles : PLAYER_SPAWNS;
   return spawns[spawnIndex % spawns.length] || PLAYER_SPAWNS[0];
+}
+
+function getSafeModeSpawnTiles() {
+  const baseSpawns = Array.isArray(modeState.spawnTiles) && modeState.spawnTiles.length > 0 ? modeState.spawnTiles : PLAYER_SPAWNS;
+  const searchOrigin = baseSpawns[0] || PLAYER_SPAWNS[0];
+  const candidates = [];
+  for (let radius = 0; radius <= 10; radius += 1) {
+    for (let row = searchOrigin.row - radius; row <= searchOrigin.row + radius; row += 1) {
+      for (let col = searchOrigin.col - radius; col <= searchOrigin.col + radius; col += 1) {
+        if (Math.max(Math.abs(col - searchOrigin.col), Math.abs(row - searchOrigin.row)) !== radius) continue;
+        if (!isSpawnTileClear(col, row)) continue;
+        candidates.push({
+          col,
+          row,
+          distance: Math.abs(col - searchOrigin.col) + Math.abs(row - searchOrigin.row)
+        });
+      }
+    }
+    if (candidates.length >= MAX_COOP_PLAYERS * 3) break;
+  }
+
+  candidates.sort((a, b) => a.distance - b.distance || a.row - b.row || a.col - b.col);
+  const selected = [];
+  for (const candidate of candidates) {
+    const spaced = selected.every((spawn) => Math.abs(spawn.col - candidate.col) + Math.abs(spawn.row - candidate.row) >= 2);
+    if (!spaced && selected.length < MAX_COOP_PLAYERS) continue;
+    selected.push({ col: candidate.col, row: candidate.row });
+    if (selected.length >= MAX_COOP_PLAYERS) break;
+  }
+  return selected.length > 0 ? selected : candidates.map((candidate) => ({ col: candidate.col, row: candidate.row })).slice(0, MAX_COOP_PLAYERS);
+}
+
+function isSpawnTileClear(col, row, actorSize = 28) {
+  if (!isWalkableTile(col, row)) return false;
+  const world = tileToWorld(col, row);
+  return isActorPositionWalkable(world.x, world.y, actorSize);
 }
 
 function getModeDepth() {
@@ -1981,6 +2024,7 @@ function createMazeModeMap(seed, floor) {
   const rng = createSeededRandom(seed + floor * 997);
   const grid = Array.from({ length: rows }, () => Array(cols).fill(" "));
   const start = { col: 5, row: 5 };
+  carveRect(grid, 3, 3, 7, 7);
   const stack = [start];
   grid[start.row][start.col] = ".";
   const visited = new Set([`${start.col},${start.row}`]);
