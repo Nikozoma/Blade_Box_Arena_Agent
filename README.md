@@ -16,6 +16,7 @@ Then visit `http://127.0.0.1:8000`.
 
 - Choose **Arena**, **Maze**, or **Dungeon** on the main menu, then click **Single Player**.
 - Click **Host Co-op** to host a local WiFi lobby from an Android phone, or **Join Co-op** to manually join a host by IP address.
+- Click **Host Army VS** to host a 2-player local WiFi versus match. The host is RED ARMY and the first client is BLUE ARMY.
 - Move with `WASD` or the arrow keys.
 - Aim by moving the mouse cursor.
 - Left click to swing the sword in the direction you are aiming.
@@ -29,11 +30,18 @@ Then visit `http://127.0.0.1:8000`.
 - Break closed dungeon chests with weapon hits. Most chests drop a fixed XP orb reward; some unlock a weapon or magic skill.
 - Equip up to two magic skills and use the bottom-right magic buttons during a run. Desktop shortcuts are `1`/`Q` and `2`/`E`.
 - In Arena, clear every enemy to advance to the next wave. Each wave adds more pressure through enemy count, speed, and health.
+- Arena spawns a Blade Warden boss every 5 waves. Bosses have a top HUD health bar, slam attacks, light minion summoning, and guaranteed bonus rewards.
 - In Maze, find the portal on each procedural floor. Floor 5 lets you exit and bank run points or continue to harder floors 6-10 for better rewards.
+- Maze floors 5 and 10 include a boss gate; defeat the boss before using the milestone portal.
 - In Dungeon, find the relic, pick it up, then return to the marked exit to bank run points.
+- Dungeon places a boss guard near the relic; defeat the boss before claiming the relic.
 - Arena enemy kills award kill points immediately. Maze and Dungeon run points bank only on successful extraction; death discards only the current run's unbanked points.
+- Arena boss rewards bank immediately and can unlock a locked weapon or magic skill. Maze and Dungeon boss rewards add run points first, so they bank only on successful extraction.
+- In Army VS, RED ARMY and BLUE ARMY fight to defeat the opposing player. Each side gets dungeon monster reinforcements about every 20 seconds, with larger waves over time and tougher units every few waves.
 - Spend kill points in the main-menu shop on permanent sword tiers, weapons, and magic skills.
 - Use **Equipment** from the main menu to equip one owned weapon and up to two owned magic skills.
+- Use **Records** from the main menu to view local high scores and recent run history.
+- The game-over and extraction screens now show a run recap with mode progress, kills, boss kills, banked/lost run points, time survived, weapon, magic, damage dealt, and new-record callouts.
 - Balanced Sword is the free default weapon and preserves the original sword feel. Additional weapons cover fast short-range blades and slower long-range heavy weapons.
 - Magic skills are Fire burn, Water slow, Electric stun, and Ground root. Each has roughly a 10-second cooldown.
 - If your health reaches zero, the game shows a Game Over screen with your final wave.
@@ -50,6 +58,7 @@ Co-op uses a host-authoritative local TCP session inside the Android APK. One ph
 - The host also owns selected game mode, floor transitions, portals, relic pickup, extraction, chest rewards, magic hit/effect results, and item unlock events; clients only request actions and render synced snapshots.
 - Clients send movement/aim/attack input and render host snapshots.
 - Weapon and equipped magic selections are sent when a client joins; the host still owns authoritative hit, damage, magic effect, and reward logic.
+- Army VS is host-authoritative and 2-player only in this first version. The host owns teams, army spawning, enemy targeting, PvP damage, player deaths, and the win result. Clients send inputs and render host snapshots.
 - Enemy kills award team-shared kill points. The host saves its reward locally, and clients save reward events locally when received.
 - Auto lobby discovery is supported, with manual IP join kept as the fallback.
 
@@ -96,8 +105,11 @@ If Gradle cannot find the Android SDK, install it through Android Studio and set
 - Movement and aiming are intentionally independent, so you can move one way while attacking another.
 - Weapon behavior is data-driven in `src/game.js` through definitions with id, display name, damage multiplier, cooldown, range, arc size, and swing duration.
 - Weapons and magic unlocks are saved locally with kill points. Equipment loadout is local and is sent to the co-op host on join.
+- Run records are saved locally and defensively. Tracked records include total runs, total boss kills, best Arena wave/kills, best Maze floor, Maze extractions, Dungeon extractions, best run points, best time, and best damage dealt.
 - Arena uses the authored survival dungeon. Maze uses deterministic procedural maze floors. Dungeon uses a separate relic retrieval layout with an entrance/exit marker.
 - Chests are session-only dungeon entities spawned from safe walkable tiles. Opened chest state is synced in co-op snapshots and is not persisted between runs.
+- Boss spawning, boss attacks, boss damage/death, boss rewards, chest rewards, magic effects, portals, relic pickup, and extraction remain host-authoritative in co-op.
+- Screen shake is applied to the world camera for heavy hits, magic impacts, chest breaks, boss spawns, boss slams, and boss deaths. Hit stop is brief and local to single-player combat feel so it does not desync co-op simulation.
 - The Android wrapper locks the app to fullscreen landscape mode and uses immersive system UI hiding.
 - Add `?debugTouch=1` to the URL in a browser build to show the temporary mobile input debug overlay.
 - Permanent shop upgrades and kill points are saved locally on each device.

@@ -23,6 +23,7 @@ const STATE = {
   MENU: "menu",
   SHOP: "shop",
   EQUIPMENT: "equipment",
+  RECORDS: "records",
   HOST_LOBBY: "hostLobby",
   JOIN_LOBBY: "joinLobby",
   PLAYING: "playing",
@@ -40,7 +41,8 @@ const SESSION = {
 const GAME_MODE = {
   ARENA: "arena",
   MAZE: "maze",
-  DUNGEON: "dungeon"
+  DUNGEON: "dungeon",
+  ARMY_VS: "armyVs"
 };
 
 const GAME_MODE_DEFINITIONS = [
@@ -264,6 +266,22 @@ const LOCAL_CORRECTION_THRESHOLD = 52;
 const LOCAL_HARD_CORRECTION_THRESHOLD = 180;
 const CHEST_OPEN_DISTANCE = 46;
 const CHEST_REWARD_XP = 4;
+const BOSS_WAVE_INTERVAL = 5;
+const BOSS_NAME = "Blade Warden";
+const BOSS_ARENA_REWARD_POINTS = 8;
+const BOSS_RUN_REWARD_POINTS = 10;
+const BOSS_SLAM_RADIUS = 118;
+const BOSS_SUMMON_LIMIT = 2;
+const VS_TEAM_RED = "team1";
+const VS_TEAM_BLUE = "team2";
+const VS_TEAM_COLORS = {
+  [VS_TEAM_RED]: "#ef476f",
+  [VS_TEAM_BLUE]: "#75d7ff"
+};
+const VS_REINFORCEMENT_INTERVAL = 20;
+const VS_INITIAL_ARMY_SIZE = 3;
+const VS_MAX_ARMY_PER_SIDE = 15;
+const VS_MINIBOSS_INTERVAL = 4;
 const PLAYER_COLORS = ["#75d7ff", "#ff9f1c", "#8de85c", "#ef476f"];
 const PLAYER_SPAWNS = [
   { col: 42, row: 30 },
@@ -271,6 +289,22 @@ const PLAYER_SPAWNS = [
   { col: 44, row: 31 },
   { col: 42, row: 33 }
 ];
+const VS_PLAYER_SPAWNS = [
+  { col: 11, row: 30 },
+  { col: 72, row: 30 }
+];
+const VS_ARMY_SPAWNS = {
+  [VS_TEAM_RED]: [
+    { col: 8, row: 26 },
+    { col: 8, row: 34 },
+    { col: 14, row: 30 }
+  ],
+  [VS_TEAM_BLUE]: [
+    { col: 75, row: 26 },
+    { col: 75, row: 34 },
+    { col: 69, row: 30 }
+  ]
+};
 
 const SPRITES = {
   adventurer: {
@@ -457,6 +491,7 @@ const settings = {
 };
 
 const permanent = loadPermanentProgress();
+const records = loadRunRecords();
 
 let gameState = STATE.MENU;
 let player;
@@ -483,6 +518,7 @@ let shopButton;
 let equipmentButton;
 let hostButton;
 let joinButton;
+let armyVsButton;
 let modeButtons = [];
 let shopBackButton;
 let shopPurchaseButtons = [];
@@ -491,6 +527,8 @@ let magicPurchaseButtons = [];
 let equipmentWeaponButtons = [];
 let equipmentMagicButtons = [];
 let equipmentBackButton;
+let recordsButton;
+let recordsBackButton;
 let levelUpButtons = [];
 let gameOverButton;
 let settingsButton;
@@ -523,6 +561,10 @@ let currentGameMode = GAME_MODE.ARENA;
 let modeState = createModeState(GAME_MODE.ARENA, { seed: 1 });
 let modeChoiceButtons = [];
 let lastAppliedMapKey = "";
+let screenShake = { time: 0, duration: 0, intensity: 0 };
+let hitStopTimer = 0;
+let currentRunStats = null;
+let lastRunSummary = null;
 const appliedRewardEvents = new Set();
 const appliedUnlockEvents = new Set();
 const networkDebug = {
@@ -627,10 +669,11 @@ function startGame() {
   sessionMode = SESSION.SINGLE;
   localPlayerId = "p1";
   resetMobileControls();
-  prepareModeRun(selectedGameMode);
+  prepareModeRun(getSelectedPlayableMode());
   player = createPlayer("p1", "Player 1", 0, permanent.swordTier);
   players = [player];
   resetRunState();
+  beginRunStats();
   gameState = STATE.PLAYING;
   startModeCombat();
 }
@@ -641,6 +684,8 @@ function resetRunState() {
   pickups = [];
   chests = createChests();
   effects = [];
+  screenShake = { time: 0, duration: 0, intensity: 0 };
+  hitStopTimer = 0;
   wave = getModeDepth();
   finalWave = Math.max(1, wave);
   nextWaveTimer = 0;
@@ -662,6 +707,7 @@ function returnToMenu() {
   mouse.down = false;
   gameState = STATE.MENU;
   sessionMode = SESSION.SINGLE;
+  selectedGameMode = getSelectedPlayableMode();
   localPlayerId = "p1";
   player = undefined;
   players = [];
@@ -670,6 +716,10 @@ function returnToMenu() {
   pickups = [];
   chests = [];
   effects = [];
+  screenShake = { time: 0, duration: 0, intensity: 0 };
+  hitStopTimer = 0;
+  currentRunStats = null;
+  lastRunSummary = null;
   levelUpChoices = [];
   coopLevelMenuOpen = false;
   activeCoopLevelOfferId = null;
@@ -687,9 +737,16 @@ function spawnWave() {
   for (let i = 0; i < count; i += 1) {
     enemies.push(createEnemy(i));
   }
+  if (shouldSpawnArenaBoss()) {
+    enemies.push(createBossEnemy("arena"));
+  }
 }
 
 function startModeCombat() {
+  if (isArmyVsMode()) {
+    startArmyVsCombat();
+    return;
+  }
   if (currentGameMode === GAME_MODE.ARENA) {
     spawnWave();
     return;
@@ -699,6 +756,9 @@ function startModeCombat() {
     : 6;
   for (let i = 0; i < startingCount; i += 1) {
     enemies.push(createEnemy(i));
+  }
+  if (shouldSpawnModeBoss()) {
+    enemies.push(createBossEnemy(currentGameMode));
   }
 }
 
@@ -750,6 +810,7 @@ function update(dt) {
   updateNetworkDebug(dt);
 
   if (gameState !== STATE.PLAYING) return;
+  updateRunStats(dt);
 
   if (modeState.choicePending) {
     if (sessionMode === SESSION.HOST) {
@@ -797,6 +858,7 @@ function update(dt) {
 }
 
 function updateEffects(dt) {
+  updateFeedback(dt);
   effects = effects.filter((effect) => {
     effect.life -= dt;
     effect.x += effect.vx * dt;
@@ -879,8 +941,10 @@ function tryAttack(attacker = player) {
   }
 
   const hitEnemies = new Set();
+  const hitPlayers = new Set();
   for (const attackAngle of attackAngles) {
     damageEnemiesInArc(attacker, attackAngle, hitEnemies);
+    damagePlayersInArc(attacker, attackAngle, hitPlayers);
     damageChestsInArc(attacker, attackAngle);
   }
 
@@ -904,12 +968,48 @@ function damageEnemiesInArc(attacker, attackAngle, hitEnemies) {
     const inArc = Math.abs(shortestAngle(attackAngle, angleToEnemy)) <= halfArc;
 
     if (inArc && enemyDistance <= reach + enemy.size * 0.7) {
+      if (!canPlayerDamageEnemy(attacker, enemy)) continue;
+      const damageApplied = Math.min(damage, Math.max(0, enemy.health));
       enemy.health -= damage;
       enemy.hitFlash = 0.14;
       hitEnemies.add(enemy);
+      recordDamageDealt(damageApplied);
       burst(enemy.x, enemy.y, "#ffd166", 7);
+      if (enemy.isBoss || weapon.damageMultiplier >= 1.5) {
+        requestScreenShake(enemy.isBoss ? 3.8 : 2.4, enemy.isBoss ? 0.14 : 0.09);
+        requestHitStop(enemy.isBoss ? 0.035 : 0.024);
+      }
     }
   }
+}
+
+function damagePlayersInArc(attacker, attackAngle, hitPlayers) {
+  if (!isArmyVsMode() || !attacker?.team) return;
+  const swordStats = getSwordStats(attacker);
+  const weapon = getWeaponDefinition(attacker);
+  const damage = attacker.damageMultiplier * swordStats.damage * weapon.damageMultiplier * 0.7;
+  const reach = weapon.range;
+  const halfArc = weapon.halfArc;
+  for (const target of players) {
+    if (!target || target.id === attacker.id || target.health <= 0 || target.team === attacker.team || hitPlayers.has(target)) continue;
+    const dx = target.x - attacker.x;
+    const dy = target.y - attacker.y;
+    const targetDistance = Math.hypot(dx, dy);
+    const angleToTarget = Math.atan2(dy, dx);
+    const inArc = Math.abs(shortestAngle(attackAngle, angleToTarget)) <= halfArc;
+    if (!inArc || targetDistance > reach + target.size * 0.7) continue;
+    damagePlayer(damage, target, attacker);
+    hitPlayers.add(target);
+    burst(target.x, target.y, VS_TEAM_COLORS[attacker.team] || "#ffd166", 9);
+    requestScreenShake(3, 0.12);
+    requestHitStop(0.024);
+  }
+}
+
+function canPlayerDamageEnemy(attacker, enemy) {
+  if (!isArmyVsMode()) return true;
+  if (!enemy.team) return false;
+  return attacker?.team && enemy.team !== attacker.team;
 }
 
 function removeDefeatedEnemies() {
@@ -927,10 +1027,41 @@ function removeDefeatedEnemies() {
 }
 
 function handleEnemyKilled(enemy) {
+  if (enemy.isBoss) {
+    handleBossKilled(enemy);
+    return;
+  }
+  if (isArmyVsMode()) {
+    burst(enemy.x, enemy.y, VS_TEAM_COLORS[enemy.team] || "#ef476f", 12);
+    return;
+  }
+  recordKill(false);
   awardModeKillPoint();
   dropXpOrb(enemy.x, enemy.y, 2 + Math.floor(wave / 3));
   maybeDropPickup(enemy.x, enemy.y);
   burst(enemy.x, enemy.y, "#ef476f", 12);
+}
+
+function handleBossKilled(enemy) {
+  recordKill(true);
+  const rewardPoints = currentGameMode === GAME_MODE.ARENA
+    ? BOSS_ARENA_REWARD_POINTS + Math.floor(wave / BOSS_WAVE_INTERVAL)
+    : BOSS_RUN_REWARD_POINTS + Math.max(0, getModeDepth() - 1) * getRunPointReward();
+  if (currentGameMode === GAME_MODE.ARENA) {
+    awardPermanentKillPoints(rewardPoints);
+  } else {
+    addRunPoints(rewardPoints);
+  }
+
+  const unlock = currentGameMode === GAME_MODE.ARENA ? chooseGuaranteedItemUnlock() : null;
+  if (unlock) {
+    applyItemUnlock(unlock.kind, unlock.id, `boss-${enemy.id}-${Date.now()}-${rewardEventCounter += 1}`);
+  }
+
+  dropXpOrb(enemy.x, enemy.y, 8 + Math.floor(getModeDepth() * 1.5));
+  burst(enemy.x, enemy.y, "#ffd166", 28);
+  requestScreenShake(8, 0.34);
+  requestHitStop(0.055);
 }
 
 function dropXpOrb(x, y, value) {
@@ -955,6 +1086,7 @@ function maybeDropPickup(x, y) {
 }
 
 function createChests() {
+  if (isArmyVsMode()) return [];
   const candidates = currentGameMode === GAME_MODE.ARENA ? CHEST_SPAWN_CANDIDATES : getModeChestCandidates();
   return candidates
     .filter((tile) => isChestSpawnTileValid(tile.col, tile.row))
@@ -1053,10 +1185,15 @@ function openChest(chest, opener = player) {
     chest.rewardType = "xp";
   }
   burst(chest.x, chest.y, "#ffd166", 10);
+  requestScreenShake(2.2, 0.1);
 }
 
 function chooseChestUnlockReward() {
   if (Math.random() >= 0.1) return null;
+  return chooseGuaranteedItemUnlock();
+}
+
+function chooseGuaranteedItemUnlock() {
   const lockedWeapons = WEAPON_DEFINITIONS
     .filter((weaponDefinition) => !isWeaponOwned(weaponDefinition.id))
     .map((weaponDefinition) => ({ kind: "weapon", id: weaponDefinition.id }));
@@ -1074,6 +1211,14 @@ function updateEnemies(dt) {
     updateEnemyStatusEffects(enemy, dt);
     if (enemy.health <= 0) {
       defeatedByStatus = true;
+      continue;
+    }
+    if (enemy.isBoss) {
+      updateBossEnemy(enemy, dt);
+      continue;
+    }
+    if (isArmyVsMode() && enemy.team) {
+      updateArmyEnemy(enemy, dt);
       continue;
     }
     const chase = getEnemyChaseVector(enemy);
@@ -1098,6 +1243,82 @@ function updateEnemies(dt) {
   }
 }
 
+function updateBossEnemy(enemy, dt) {
+  const chase = getEnemyChaseVector(enemy);
+  const movementScale = getEnemyMovementScale(enemy);
+  moveActor(enemy, chase.x * enemy.speed * movementScale * dt, chase.y * enemy.speed * movementScale * dt);
+
+  enemy.touchTimer = Math.max(0, enemy.touchTimer - dt);
+  enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+  enemy.magicFlash = Math.max(0, (enemy.magicFlash || 0) - dt);
+  enemy.slamFlash = Math.max(0, (enemy.slamFlash || 0) - dt);
+
+  for (const activePlayer of getLivingPlayers()) {
+    const contactDistance = activePlayer.size * 0.48 + enemy.size * 0.55;
+    if (distance(activePlayer.x, activePlayer.y, enemy.x, enemy.y) < contactDistance && enemy.touchTimer <= 0) {
+      enemy.touchTimer = 0.82;
+      damagePlayer(enemy.damage, activePlayer);
+      requestScreenShake(2.2, 0.12);
+      break;
+    }
+  }
+
+  if (movementScale <= 0) return;
+  enemy.bossAttackTimer = Math.max(0, (enemy.bossAttackTimer || 0) - dt);
+  if (enemy.bossAttackTimer > 0) return;
+  performBossSlam(enemy);
+  enemy.bossAttackTimer = 2.7;
+}
+
+function updateArmyEnemy(enemy, dt) {
+  const target = getEnemyTargetPlayer(enemy);
+  if (!target || target.health <= 0) {
+    enemy.touchTimer = Math.max(0, enemy.touchTimer - dt);
+    enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+    enemy.magicFlash = Math.max(0, (enemy.magicFlash || 0) - dt);
+    return;
+  }
+  const chase = getEnemyChaseVector(enemy);
+  const movementScale = getEnemyMovementScale(enemy);
+  moveActor(enemy, chase.x * enemy.speed * movementScale * dt, chase.y * enemy.speed * movementScale * dt);
+  enemy.touchTimer = Math.max(0, enemy.touchTimer - dt);
+  enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+  enemy.magicFlash = Math.max(0, (enemy.magicFlash || 0) - dt);
+  const contactDistance = target.size * 0.48 + enemy.size * 0.55;
+  if (distance(target.x, target.y, enemy.x, enemy.y) < contactDistance && enemy.touchTimer <= 0) {
+    enemy.touchTimer = 0.78;
+    damagePlayer(enemy.damage, target, enemy);
+  }
+}
+
+function performBossSlam(enemy) {
+  enemy.slamFlash = 0.28;
+  enemy.magicFlash = 0.32;
+  enemy.magicColor = "#ff4f7a";
+  burst(enemy.x, enemy.y, "#ff4f7a", 18);
+  requestScreenShake(6, 0.22);
+  requestHitStop(0.035);
+
+  for (const activePlayer of getLivingPlayers()) {
+    if (distance(activePlayer.x, activePlayer.y, enemy.x, enemy.y) <= BOSS_SLAM_RADIUS) {
+      damagePlayer(Math.max(8, Math.round(enemy.damage * 0.75)), activePlayer);
+    }
+  }
+
+  if ((enemy.bossSummonsLeft || 0) > 0 && enemies.length < 18) {
+    enemy.bossSummonsLeft -= 1;
+    for (let i = 0; i < 2; i += 1) {
+      const minion = createEnemy(enemyIdCounter + i + 1);
+      const angle = Math.random() * Math.PI * 2;
+      const offset = getNearestWalkableWorld(enemy.x + Math.cos(angle) * 86, enemy.y + Math.sin(angle) * 86);
+      minion.x = offset.x;
+      minion.y = offset.y;
+      minion.health = Math.max(1, minion.health);
+      enemies.push(minion);
+    }
+  }
+}
+
 function updateEnemyStatusEffects(enemy, dt) {
   enemy.burnTimer = Math.max(0, (enemy.burnTimer || 0) - dt);
   enemy.slowTimer = Math.max(0, (enemy.slowTimer || 0) - dt);
@@ -1107,7 +1328,9 @@ function updateEnemyStatusEffects(enemy, dt) {
     enemy.burnTick = (enemy.burnTick || 0) + dt;
     if (enemy.burnTick >= 0.5) {
       enemy.burnTick -= 0.5;
-      enemy.health -= enemy.burnDamage || 0.7;
+      const burnDamage = enemy.burnDamage || 0.7;
+      recordDamageDealt(Math.min(burnDamage, Math.max(0, enemy.health)));
+      enemy.health -= burnDamage;
       enemy.hitFlash = 0.12;
       burst(enemy.x, enemy.y, "#ff6b35", 3);
     }
@@ -1322,12 +1545,32 @@ function applyMagicUse(caster, request = {}) {
   for (const enemy of enemies) {
     if (enemy.health <= 0) continue;
     if (distance(enemy.x, enemy.y, targetX, targetY) > magic.radius) continue;
+    if (!canPlayerDamageEnemy(caster, enemy)) continue;
     applyMagicEffectToEnemy(enemy, magic);
     hitCount += 1;
   }
+  hitCount += applyMagicToOpposingPlayers(caster, targetX, targetY, magic);
   burst(targetX, targetY, magic.color, hitCount > 0 ? 16 : 8);
+  if (hitCount > 0) {
+    requestScreenShake(3, 0.12);
+    requestHitStop(0.026);
+  }
   removeDefeatedEnemies();
   return true;
+}
+
+function applyMagicToOpposingPlayers(caster, targetX, targetY, magic) {
+  if (!isArmyVsMode() || !caster?.team) return 0;
+  let hits = 0;
+  for (const target of players) {
+    if (!target || target.id === caster.id || target.team === caster.team || target.health <= 0) continue;
+    if (distance(target.x, target.y, targetX, targetY) > magic.radius) continue;
+    const damage = magic.effect === "burn" ? 7 : magic.effect === "electric" ? 8 : 5;
+    damagePlayer(damage, target, caster);
+    burst(target.x, target.y, magic.color, 10);
+    hits += 1;
+  }
+  return hits;
 }
 
 function applyMagicEffectToEnemy(enemy, magic) {
@@ -1336,6 +1579,7 @@ function applyMagicEffectToEnemy(enemy, magic) {
   if (magic.effect === "burn") {
     enemy.burnTimer = Math.max(enemy.burnTimer || 0, magic.duration);
     enemy.burnDamage = magic.tickDamage;
+    recordDamageDealt(Math.min(0.4, Math.max(0, enemy.health)));
     enemy.health -= 0.4;
   } else if (magic.effect === "slow") {
     enemy.slowTimer = Math.max(enemy.slowTimer || 0, magic.duration);
@@ -1347,8 +1591,9 @@ function applyMagicEffectToEnemy(enemy, magic) {
   }
 }
 
-function damagePlayer(amount, activePlayer = player) {
+function damagePlayer(amount, activePlayer = player, source = null) {
   if (!activePlayer || activePlayer.invulnerableTimer > 0) return;
+  if (isArmyVsMode() && source?.team && activePlayer.team === source.team) return;
 
   if (activePlayer.shieldActive) {
     activePlayer.shieldActive = false;
@@ -1357,7 +1602,9 @@ function damagePlayer(amount, activePlayer = player) {
     return;
   }
 
+  const previousHealth = activePlayer.health;
   activePlayer.health = Math.max(0, activePlayer.health - amount);
+  recordDamageTaken(previousHealth - activePlayer.health);
   activePlayer.invulnerableTimer = 0.48;
   burst(activePlayer.x, activePlayer.y, "#75d7ff", 9);
 }
@@ -1523,7 +1770,7 @@ function isActorPositionWalkable(x, y, size) {
 }
 
 function getEnemyChaseVector(enemy) {
-  const targetPlayer = getNearestLivingPlayer(enemy.x, enemy.y);
+  const targetPlayer = getEnemyTargetPlayer(enemy);
   if (!targetPlayer) return { x: 0, y: 0 };
 
   if (hasLineOfSight(enemy.x, enemy.y, targetPlayer.x, targetPlayer.y)) {
@@ -1545,6 +1792,17 @@ function getEnemyChaseVector(enemy) {
   }
 
   return { x: 0, y: 0 };
+}
+
+function getEnemyTargetPlayer(enemy) {
+  if (isArmyVsMode() && enemy?.team) {
+    return getPlayerByTeam(enemy.team === VS_TEAM_RED ? VS_TEAM_BLUE : VS_TEAM_RED);
+  }
+  return getNearestLivingPlayer(enemy.x, enemy.y);
+}
+
+function getPlayerByTeam(team) {
+  return players.find((activePlayer) => activePlayer?.team === team && activePlayer.connected !== false) || null;
 }
 
 function getNextFlowTile(col, row, targetFlowField = flowField) {
@@ -1670,6 +1928,18 @@ function getNearestLivingPlayer(x, y) {
   return best;
 }
 
+function getActiveBoss() {
+  return enemies.find((enemy) => enemy?.isBoss && enemy.health > 0) || null;
+}
+
+function isBossGateActive() {
+  return Boolean(getActiveBoss());
+}
+
+function isArmyVsMode() {
+  return currentGameMode === GAME_MODE.ARMY_VS;
+}
+
 function worldToTile(x, y) {
   return {
     col: Math.floor((x - ARENA.x) / MAP.tileSize),
@@ -1763,6 +2033,21 @@ function createModeState(modeId, options = {}) {
       map: generated.map
     };
   }
+  if (mode === GAME_MODE.ARMY_VS) {
+    return {
+      mode,
+      seed,
+      mapKey: `${GAME_MODE.ARMY_VS}`,
+      floor: 1,
+      runPoints: 0,
+      armyWave: Math.max(1, Math.round(Number(options.armyWave) || 1)),
+      reinforcementTimer: Number.isFinite(options.reinforcementTimer) ? options.reinforcementTimer : VS_REINFORCEMENT_INTERVAL,
+      winnerTeam: options.winnerTeam || null,
+      winnerLabel: options.winnerLabel || "",
+      spawnTiles: VS_PLAYER_SPAWNS,
+      map: createDungeonMap()
+    };
+  }
   return {
     mode: GAME_MODE.ARENA,
     seed,
@@ -1774,8 +2059,150 @@ function createModeState(modeId, options = {}) {
   };
 }
 
+function startArmyVsCombat() {
+  modeState.armyWave = 1;
+  modeState.reinforcementTimer = VS_REINFORCEMENT_INTERVAL;
+  modeState.winnerTeam = null;
+  spawnArmyReinforcements(true);
+}
+
+function spawnArmyReinforcements(initial = false) {
+  if (!isArmyVsMode()) return;
+  const waveNumber = Math.max(1, modeState.armyWave || 1);
+  const spawnCount = initial ? VS_INITIAL_ARMY_SIZE : VS_INITIAL_ARMY_SIZE + Math.floor((waveNumber - 1) * 0.75);
+  for (const team of [VS_TEAM_RED, VS_TEAM_BLUE]) {
+    const livingCount = getArmyCount(team);
+    const room = Math.max(0, VS_MAX_ARMY_PER_SIDE - livingCount);
+    const amount = Math.min(room, spawnCount);
+    for (let i = 0; i < amount; i += 1) {
+      const tough = !initial && waveNumber % VS_MINIBOSS_INTERVAL === 0 && i === 0;
+      enemies.push(createArmyEnemy(team, i, tough));
+    }
+  }
+  requestScreenShake(initial ? 3 : 4, 0.16);
+}
+
+function createArmyEnemy(team, index, tough = false) {
+  const enemy = createEnemy(index);
+  const position = getArmySpawnPosition(team, enemy.size, index);
+  enemy.x = position.x;
+  enemy.y = position.y;
+  enemy.team = team;
+  enemy.ownerPlayerId = team === VS_TEAM_RED ? "p1" : "p2";
+  enemy.kind = tough ? "vampire" : enemy.kind;
+  enemy.isMiniBoss = Boolean(tough);
+  if (tough) {
+    enemy.size = 34;
+    enemy.maxHealth = Math.max(5, enemy.maxHealth + 4 + Math.floor((modeState.armyWave || 1) / 2));
+    enemy.health = enemy.maxHealth;
+    enemy.damage += 4;
+    enemy.speed *= 0.86;
+  }
+  return enemy;
+}
+
+function getArmySpawnPosition(team, size, index) {
+  const spawns = VS_ARMY_SPAWNS[team] || VS_ARMY_SPAWNS[VS_TEAM_RED];
+  const origin = spawns[index % spawns.length];
+  for (let radius = 0; radius <= 8; radius += 1) {
+    for (let row = origin.row - radius; row <= origin.row + radius; row += 1) {
+      for (let col = origin.col - radius; col <= origin.col + radius; col += 1) {
+        if (Math.max(Math.abs(col - origin.col), Math.abs(row - origin.row)) !== radius) continue;
+        if (!isSpawnTileClear(col, row, size)) continue;
+        const world = tileToWorld(col, row);
+        return world;
+      }
+    }
+  }
+  return getNearestWalkableWorld(tileToWorld(origin.col, origin.row).x, tileToWorld(origin.col, origin.row).y);
+}
+
+function getArmyCount(team) {
+  return enemies.filter((enemy) => enemy.team === team && enemy.health > 0).length;
+}
+
+function shouldSpawnArenaBoss() {
+  return currentGameMode === GAME_MODE.ARENA && wave > 0 && wave % BOSS_WAVE_INTERVAL === 0;
+}
+
+function shouldSpawnModeBoss() {
+  if (currentGameMode === GAME_MODE.MAZE) {
+    return modeState.floor === 5 || modeState.floor === 10;
+  }
+  if (currentGameMode === GAME_MODE.DUNGEON) {
+    return Boolean(modeState.relic);
+  }
+  return false;
+}
+
+function createBossEnemy(context = currentGameMode) {
+  const depth = getModeDepth();
+  const playerScale = Math.max(1, getLivingPlayers().length);
+  const size = 46;
+  const position = getBossSpawnPosition(size, context);
+  const maxHealth = Math.round(18 + depth * 6 + playerScale * 8);
+  requestScreenShake(5, 0.24);
+  return {
+    id: `boss${enemyIdCounter += 1}`,
+    x: position.x,
+    y: position.y,
+    size,
+    kind: "vampire",
+    animOffset: Math.random() * 1000,
+    speed: currentGameMode === GAME_MODE.ARENA ? 46 + Math.min(22, wave * 1.2) : 44 + depth * 2,
+    health: maxHealth,
+    maxHealth,
+    damage: currentGameMode === GAME_MODE.ARENA ? 18 + Math.floor(wave / 5) * 3 : 15 + Math.floor(depth / 2) * 2,
+    touchTimer: 0,
+    hitFlash: 0,
+    isBoss: true,
+    bossName: BOSS_NAME,
+    bossAttackTimer: 1.4,
+    bossSummonsLeft: BOSS_SUMMON_LIMIT,
+    slamFlash: 0
+  };
+}
+
+function getBossSpawnPosition(size, context) {
+  const tiles = getWalkableTiles().filter((tile) => {
+    const world = tileToWorld(tile.col, tile.row);
+    return isActorPositionWalkable(world.x, world.y, size);
+  });
+  if (tiles.length === 0) return getNearestWalkableWorld(ARENA.width / 2, ARENA.height / 2);
+
+  const livingPlayers = getLivingPlayers();
+  const target = getBossTargetPoint(context);
+  const scored = tiles.map((tile) => {
+    const world = tileToWorld(tile.col, tile.row);
+    const nearestPlayerDistance = livingPlayers.reduce((best, activePlayer) => Math.min(best, distance(world.x, world.y, activePlayer.x, activePlayer.y)), Infinity);
+    const targetDistance = target ? distance(world.x, world.y, target.x, target.y) : 0;
+    return { tile, world, nearestPlayerDistance, targetDistance };
+  }).filter((candidate) => candidate.nearestPlayerDistance > 220 || livingPlayers.length === 0);
+
+  const choices = scored.length > 0 ? scored : tiles.map((tile) => ({ tile, world: tileToWorld(tile.col, tile.row), nearestPlayerDistance: 0, targetDistance: 0 }));
+  if (target) {
+    choices.sort((a, b) => a.targetDistance - b.targetDistance || b.nearestPlayerDistance - a.nearestPlayerDistance);
+    return choices[0].world;
+  }
+  choices.sort((a, b) => b.nearestPlayerDistance - a.nearestPlayerDistance);
+  return choices[0].world;
+}
+
+function getBossTargetPoint(context) {
+  if (context === GAME_MODE.MAZE && modeState.portal) return modeState.portal;
+  if (context === GAME_MODE.DUNGEON && modeState.relic) return modeState.relic;
+  return null;
+}
+
 function getGameModeDefinition(modeId) {
+  if (modeId === GAME_MODE.ARMY_VS) {
+    return { id: GAME_MODE.ARMY_VS, label: "Army VS", detail: "Two-player army battle" };
+  }
   return GAME_MODE_DEFINITIONS.find((definition) => definition.id === modeId) || GAME_MODE_DEFINITIONS[0];
+}
+
+function getSelectedPlayableMode() {
+  return selectedGameMode === GAME_MODE.ARMY_VS ? GAME_MODE.ARENA : selectedGameMode;
 }
 
 function applyModeMap(nextModeState) {
@@ -1787,6 +2214,9 @@ function applyModeMap(nextModeState) {
 }
 
 function getPlayerSpawnTile(spawnIndex = 0) {
+  if (isArmyVsMode()) {
+    return VS_PLAYER_SPAWNS[spawnIndex % VS_PLAYER_SPAWNS.length] || VS_PLAYER_SPAWNS[0];
+  }
   if (currentGameMode === GAME_MODE.ARENA) {
     return PLAYER_SPAWNS[spawnIndex % PLAYER_SPAWNS.length] || PLAYER_SPAWNS[0];
   }
@@ -1835,6 +2265,7 @@ function isSpawnTileClear(col, row, actorSize = 28) {
 }
 
 function getModeDepth() {
+  if (isArmyVsMode()) return Math.max(1, modeState.armyWave || 1);
   if (currentGameMode === GAME_MODE.MAZE) return Math.max(1, modeState.floor || 1);
   if (currentGameMode === GAME_MODE.DUNGEON) return 3;
   return wave;
@@ -1847,16 +2278,67 @@ function getRunPointReward() {
 }
 
 function addRunPoints(amount) {
-  modeState.runPoints = Math.max(0, Math.round((modeState.runPoints || 0) + amount));
+  const points = Math.max(0, Math.round(Number(amount) || 0));
+  modeState.runPoints = Math.max(0, Math.round((modeState.runPoints || 0) + points));
+  if (points > 0 && currentRunStats) {
+    currentRunStats.pointsEarned += points;
+    currentRunStats.runPointsEarned += points;
+  }
 }
 
 function updateModeObjectives(dt) {
+  if (isArmyVsMode()) {
+    updateArmyVsMode(dt);
+    return;
+  }
   if (currentGameMode === GAME_MODE.ARENA || !modeState || modeState.choicePending) return;
   updateExplorationEnemyPressure(dt);
   if (currentGameMode === GAME_MODE.MAZE) {
     updateMazeObjective();
   } else if (currentGameMode === GAME_MODE.DUNGEON) {
     updateDungeonObjective();
+  }
+}
+
+function updateArmyVsMode(dt) {
+  if (modeState.winnerTeam) return;
+  modeState.reinforcementTimer = Math.max(0, (modeState.reinforcementTimer || VS_REINFORCEMENT_INTERVAL) - dt);
+  if (modeState.reinforcementTimer <= 0) {
+    modeState.armyWave = Math.max(1, (modeState.armyWave || 1) + 1);
+    spawnArmyReinforcements(false);
+    modeState.reinforcementTimer = VS_REINFORCEMENT_INTERVAL;
+  }
+  updateArmyVsWinCondition();
+}
+
+function updateArmyVsWinCondition() {
+  if (!isArmyVsMode() || modeState.winnerTeam) return;
+  const redPlayer = getPlayerByTeam(VS_TEAM_RED);
+  const bluePlayer = getPlayerByTeam(VS_TEAM_BLUE);
+  if (!redPlayer || !bluePlayer) return;
+  if (redPlayer.health <= 0 && bluePlayer.health <= 0) {
+    finishArmyVsMatch("draw");
+  } else if (redPlayer.health <= 0) {
+    finishArmyVsMatch(VS_TEAM_BLUE);
+  } else if (bluePlayer.health <= 0) {
+    finishArmyVsMatch(VS_TEAM_RED);
+  }
+}
+
+function finishArmyVsMatch(winnerTeam) {
+  modeState.winnerTeam = winnerTeam;
+  modeState.winnerLabel = winnerTeam === VS_TEAM_RED
+    ? "RED ARMY WINS"
+    : winnerTeam === VS_TEAM_BLUE
+      ? "BLUE ARMY WINS"
+      : "ARMY VS DRAW";
+  lastRunSummary = null;
+  resetMobileControls();
+  mouse.down = false;
+  gameState = STATE.GAME_OVER;
+  requestScreenShake(7, 0.28);
+  if (sessionMode === SESSION.HOST) {
+    broadcastNetworkMessage({ type: "snapshot", snapshot: createSnapshot() });
   }
 }
 
@@ -1871,6 +2353,7 @@ function updateExplorationEnemyPressure(dt) {
 
 function updateMazeObjective() {
   if (!modeState.portal) return;
+  if (isBossGateActive() && (modeState.floor === 5 || modeState.floor === 10)) return;
   const activatingPlayer = getLivingPlayers().find((activePlayer) => distance(activePlayer.x, activePlayer.y, modeState.portal.x, modeState.portal.y) < 38);
   if (!activatingPlayer) return;
   if (modeState.floor === 5 && !modeState.continued) {
@@ -1887,6 +2370,9 @@ function updateMazeObjective() {
 }
 
 function advanceMazeFloor(nextFloor) {
+  if (currentRunStats) {
+    currentRunStats.highestMazeFloor = Math.max(currentRunStats.highestMazeFloor || 1, nextFloor);
+  }
   const runPoints = modeState.runPoints || 0;
   const continued = modeState.continued || nextFloor > 5;
   const seed = (modeState.seed || 1) + nextFloor * 7919;
@@ -1903,9 +2389,11 @@ function advanceMazeFloor(nextFloor) {
 
 function updateDungeonObjective() {
   if (!modeState.hasRelic && modeState.relic) {
+    if (isBossGateActive()) return;
     const finder = getLivingPlayers().find((activePlayer) => distance(activePlayer.x, activePlayer.y, modeState.relic.x, modeState.relic.y) < 36);
     if (finder) {
       modeState.hasRelic = true;
+      if (currentRunStats) currentRunStats.relicFound = true;
       addRunPoints(8);
       burst(modeState.relic.x, modeState.relic.y, "#f7e967", 18);
     }
@@ -1955,21 +2443,30 @@ function completeCurrentRun(reason) {
   }
   modeState.extracted = true;
   modeState.completeReason = reason;
+  const summary = finalizeRun("extracted", reason, { bankedPoints: amount, lostRunPoints: 0 });
   resetMobileControls();
   mouse.down = false;
   if (sessionMode === SESSION.HOST) {
     broadcastNetworkMessage({ type: "hostEnded" });
   }
-  returnToMenu();
+  lastRunSummary = summary;
+  gameState = STATE.GAME_OVER;
 }
 
 function failCurrentRun() {
+  if (isArmyVsMode()) {
+    updateArmyVsWinCondition();
+    if (!modeState.winnerTeam) finishArmyVsMatch("draw");
+    return;
+  }
   if (player) player.health = 0;
+  const lostRunPoints = currentGameMode !== GAME_MODE.ARENA ? modeState.runPoints || 0 : 0;
   if (currentGameMode !== GAME_MODE.ARENA) {
     modeState.failed = true;
-    modeState.lostRunPoints = modeState.runPoints || 0;
+    modeState.lostRunPoints = lostRunPoints;
     modeState.runPoints = 0;
   }
+  finalizeRun("failed", currentGameMode === GAME_MODE.ARENA ? "Defeated" : "Run failed", { bankedPoints: 0, lostRunPoints });
   gameState = STATE.GAME_OVER;
   mouse.down = false;
   resetMobileControls();
@@ -1990,6 +2487,10 @@ function serializeModeState() {
     hasRelic: Boolean(modeState.hasRelic),
     failed: Boolean(modeState.failed),
     lostRunPoints: modeState.lostRunPoints || 0,
+    armyWave: modeState.armyWave || 1,
+    reinforcementTimer: roundNet(modeState.reinforcementTimer || 0),
+    winnerTeam: modeState.winnerTeam || null,
+    winnerLabel: modeState.winnerLabel || "",
     portal: modeState.portal ? { col: modeState.portal.col, row: modeState.portal.row, x: roundNet(modeState.portal.x), y: roundNet(modeState.portal.y) } : null,
     relic: modeState.relic ? { col: modeState.relic.col, row: modeState.relic.row, x: roundNet(modeState.relic.x), y: roundNet(modeState.relic.y) } : null,
     exit: modeState.exit ? { col: modeState.exit.col, row: modeState.exit.row, x: roundNet(modeState.exit.x), y: roundNet(modeState.exit.y) } : null
@@ -2012,10 +2513,291 @@ function applyModeSnapshot(snapshotModeState) {
     hasRelic: Boolean(snapshotModeState.hasRelic),
     failed: Boolean(snapshotModeState.failed),
     lostRunPoints: snapshotModeState.lostRunPoints || 0,
+    armyWave: snapshotModeState.armyWave || modeState.armyWave || 1,
+    reinforcementTimer: Number.isFinite(snapshotModeState.reinforcementTimer) ? snapshotModeState.reinforcementTimer : modeState.reinforcementTimer,
+    winnerTeam: snapshotModeState.winnerTeam || null,
+    winnerLabel: snapshotModeState.winnerLabel || "",
     portal: snapshotModeState.portal || modeState.portal,
     relic: snapshotModeState.relic || modeState.relic,
     exit: snapshotModeState.exit || modeState.exit
   });
+}
+
+function beginRunStats() {
+  const localWeapon = getWeaponDefinition(player);
+  currentRunStats = {
+    mode: currentGameMode,
+    modeLabel: getGameModeDefinition(currentGameMode).label,
+    sessionMode,
+    duration: 0,
+    startedAt: Date.now(),
+    waveReached: currentGameMode === GAME_MODE.ARENA ? wave : 0,
+    highestMazeFloor: currentGameMode === GAME_MODE.MAZE ? modeState.floor || 1 : 0,
+    dungeonRelicFound: Boolean(modeState.hasRelic),
+    kills: 0,
+    bossKills: 0,
+    pointsEarned: 0,
+    runPointsEarned: modeState.runPoints || 0,
+    bankedRunPoints: 0,
+    lostRunPoints: 0,
+    damageDealt: 0,
+    damageTaken: 0,
+    weaponId: localWeapon.id,
+    weaponName: localWeapon.name,
+    magicIds: sanitizeEquippedMagicIds(player?.equippedMagicIds || permanent.equippedMagicIds),
+    finalized: false
+  };
+}
+
+function updateRunStats(dt) {
+  if (!currentRunStats || currentRunStats.finalized) return;
+  currentRunStats.duration += dt;
+  currentRunStats.waveReached = Math.max(currentRunStats.waveReached || 0, finalWave || wave || 1);
+  if (currentGameMode === GAME_MODE.MAZE) {
+    currentRunStats.highestMazeFloor = Math.max(currentRunStats.highestMazeFloor || 1, modeState.floor || 1);
+    currentRunStats.runPointsEarned = Math.max(currentRunStats.runPointsEarned || 0, modeState.runPoints || 0);
+  }
+  if (currentGameMode === GAME_MODE.DUNGEON) {
+    currentRunStats.dungeonRelicFound = Boolean(currentRunStats.dungeonRelicFound || modeState.hasRelic);
+    currentRunStats.runPointsEarned = Math.max(currentRunStats.runPointsEarned || 0, modeState.runPoints || 0);
+  }
+}
+
+function recordKill(isBoss) {
+  if (!currentRunStats || currentRunStats.finalized) return;
+  currentRunStats.kills += 1;
+  if (isBoss) currentRunStats.bossKills += 1;
+}
+
+function recordDamageDealt(amount) {
+  if (!currentRunStats || currentRunStats.finalized) return;
+  currentRunStats.damageDealt += Math.max(0, Number(amount) || 0);
+}
+
+function recordDamageTaken(amount) {
+  if (!currentRunStats || currentRunStats.finalized) return;
+  currentRunStats.damageTaken += Math.max(0, Number(amount) || 0);
+}
+
+function finalizeRun(outcome, reason, rewardInfo = {}) {
+  if (!currentRunStats) beginRunStats();
+  if (currentRunStats.finalized) return lastRunSummary;
+  updateRunStats(0);
+  currentRunStats.finalized = true;
+  currentRunStats.bankedRunPoints = Math.max(0, Math.round(Number(rewardInfo.bankedPoints) || 0));
+  currentRunStats.lostRunPoints = Math.max(0, Math.round(Number(rewardInfo.lostRunPoints) || 0));
+  const summary = createRunSummary(outcome, reason, rewardInfo, true);
+  summary.records = updateRunRecords(summary);
+  saveRunRecords();
+  lastRunSummary = summary;
+  return summary;
+}
+
+function createRunSummary(outcome, reason, rewardInfo = {}, includeStats = true) {
+  const stats = includeStats && currentRunStats ? currentRunStats : {
+    mode: currentGameMode,
+    modeLabel: getGameModeDefinition(currentGameMode).label,
+    duration: 0,
+    waveReached: finalWave || wave || 1,
+    highestMazeFloor: modeState?.floor || 1,
+    dungeonRelicFound: Boolean(modeState?.hasRelic),
+    kills: 0,
+    bossKills: 0,
+    pointsEarned: 0,
+    runPointsEarned: modeState?.runPoints || 0,
+    bankedRunPoints: rewardInfo.bankedPoints || 0,
+    lostRunPoints: rewardInfo.lostRunPoints || 0,
+    damageDealt: 0,
+    damageTaken: 0,
+    weaponName: getSelectedWeapon().name,
+    magicIds: permanent.equippedMagicIds || []
+  };
+  const success = outcome === "extracted";
+  return {
+    mode: stats.mode,
+    title: stats.modeLabel || getGameModeDefinition(stats.mode).label,
+    heading: success ? "Run Complete" : "Game Over",
+    resultLabel: success ? reason : `${stats.modeLabel || getGameModeDefinition(stats.mode).label} failed`,
+    success,
+    duration: stats.duration || 0,
+    waveReached: stats.waveReached || finalWave || wave || 1,
+    highestMazeFloor: stats.highestMazeFloor || 0,
+    dungeonRelicFound: Boolean(stats.dungeonRelicFound),
+    kills: stats.kills || 0,
+    bossKills: stats.bossKills || 0,
+    pointsEarned: stats.pointsEarned || 0,
+    runPointsEarned: stats.runPointsEarned || 0,
+    bankedRunPoints: stats.bankedRunPoints || 0,
+    lostRunPoints: stats.lostRunPoints || 0,
+    damageDealt: stats.damageDealt || 0,
+    damageTaken: stats.damageTaken || 0,
+    weaponName: stats.weaponName || getSelectedWeapon().name,
+    magicNames: (stats.magicIds || []).map(getMagicById).filter(Boolean).map((magic) => magic.name),
+    records: []
+  };
+}
+
+function getRunSummaryRows(summary) {
+  const progressLabel = summary.mode === GAME_MODE.ARENA
+    ? "Wave Reached"
+    : summary.mode === GAME_MODE.MAZE
+      ? "Highest Floor"
+      : "Relic Found";
+  const progressValue = summary.mode === GAME_MODE.ARENA
+    ? String(summary.waveReached)
+    : summary.mode === GAME_MODE.MAZE
+      ? String(summary.highestMazeFloor)
+      : summary.dungeonRelicFound ? "Yes" : "No";
+  return [
+    { label: "Mode", value: summary.title },
+    { label: progressLabel, value: progressValue, record: hasRecordLabel(summary, progressLabel) },
+    { label: "Kills", value: String(summary.kills), record: hasRecordLabel(summary, "Kills") },
+    { label: "Boss Kills", value: String(summary.bossKills) },
+    { label: "Run Points Banked", value: String(summary.bankedRunPoints) },
+    { label: "Run Points Lost", value: String(summary.lostRunPoints) },
+    { label: "Time Survived", value: formatDuration(summary.duration), record: hasRecordLabel(summary, "Time") },
+    { label: "Damage Dealt", value: String(Math.round(summary.damageDealt)), record: hasRecordLabel(summary, "Damage") },
+    { label: "Weapon", value: truncateText(summary.weaponName, 24) },
+    { label: "Magic", value: truncateText(summary.magicNames.join(" / ") || "None", 24) }
+  ];
+}
+
+function hasRecordLabel(summary, label) {
+  return summary.records.some((record) => record.includes(label));
+}
+
+function defaultRunRecords() {
+  return {
+    totalRuns: 0,
+    totalBossKills: 0,
+    bestArenaWave: 0,
+    bestArenaKills: 0,
+    bestMazeFloor: 0,
+    totalMazeExtractions: 0,
+    totalDungeonExtractions: 0,
+    bestRunPoints: 0,
+    bestTimeSurvived: 0,
+    bestDamageDealt: 0,
+    recentRuns: []
+  };
+}
+
+function sanitizeRunRecords(value = {}) {
+  const defaults = defaultRunRecords();
+  const sanitized = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    if (key === "recentRuns") continue;
+    sanitized[key] = Math.max(0, Math.round(Number(value[key]) || 0));
+  }
+  sanitized.bestTimeSurvived = Math.max(0, Number(value.bestTimeSurvived) || 0);
+  sanitized.bestDamageDealt = Math.max(0, Number(value.bestDamageDealt) || 0);
+  sanitized.recentRuns = Array.isArray(value.recentRuns) ? value.recentRuns.slice(0, 8) : [];
+  return sanitized;
+}
+
+function loadRunRecords() {
+  try {
+    return sanitizeRunRecords(JSON.parse(localStorage.getItem("bladeBoxArena.records") || "{}"));
+  } catch (error) {
+    return defaultRunRecords();
+  }
+}
+
+function saveRunRecords() {
+  try {
+    localStorage.setItem("bladeBoxArena.records", JSON.stringify(records));
+  } catch (error) {
+    // Run history is optional; gameplay should continue without it.
+  }
+}
+
+function updateRunRecords(summary) {
+  const newRecords = [];
+  records.totalRuns += 1;
+  records.totalBossKills += summary.bossKills;
+  if (summary.mode === GAME_MODE.ARENA) {
+    if (summary.waveReached > records.bestArenaWave) {
+      records.bestArenaWave = summary.waveReached;
+      newRecords.push("Wave");
+    }
+    if (summary.kills > records.bestArenaKills) {
+      records.bestArenaKills = summary.kills;
+      newRecords.push("Kills");
+    }
+  }
+  if (summary.mode === GAME_MODE.MAZE) {
+    if (summary.highestMazeFloor > records.bestMazeFloor) {
+      records.bestMazeFloor = summary.highestMazeFloor;
+      newRecords.push("Floor");
+    }
+    if (summary.success) records.totalMazeExtractions += 1;
+  }
+  if (summary.mode === GAME_MODE.DUNGEON && summary.success) {
+    records.totalDungeonExtractions += 1;
+  }
+  if (summary.runPointsEarned > records.bestRunPoints) {
+    records.bestRunPoints = summary.runPointsEarned;
+    newRecords.push("Run Points");
+  }
+  if (summary.duration > records.bestTimeSurvived) {
+    records.bestTimeSurvived = summary.duration;
+    newRecords.push("Time");
+  }
+  if (summary.damageDealt > records.bestDamageDealt) {
+    records.bestDamageDealt = summary.damageDealt;
+    newRecords.push("Damage");
+  }
+  records.recentRuns = [
+    {
+      mode: summary.title,
+      result: summary.resultLabel,
+      success: summary.success,
+      duration: Math.round(summary.duration),
+      kills: summary.kills,
+      bossKills: summary.bossKills,
+      runPoints: summary.runPointsEarned,
+      playedAt: Date.now()
+    },
+    ...(records.recentRuns || [])
+  ].slice(0, 8);
+  return newRecords;
+}
+
+function updateFeedback(dt) {
+  screenShake.time = Math.max(0, screenShake.time - dt);
+  if (screenShake.time <= 0) {
+    screenShake.intensity = 0;
+    screenShake.duration = 0;
+  }
+}
+
+function requestScreenShake(intensity, duration) {
+  screenShake.intensity = Math.max(screenShake.intensity || 0, Number(intensity) || 0);
+  screenShake.duration = Math.max(screenShake.duration || 0, Number(duration) || 0);
+  screenShake.time = Math.max(screenShake.time || 0, Number(duration) || 0);
+}
+
+function requestHitStop(duration) {
+  if (sessionMode !== SESSION.SINGLE || gameState !== STATE.PLAYING) return;
+  hitStopTimer = Math.max(hitStopTimer || 0, Number(duration) || 0);
+}
+
+function consumeHitStopDt(dt) {
+  if (hitStopTimer <= 0 || gameState !== STATE.PLAYING || sessionMode !== SESSION.SINGLE) return dt;
+  hitStopTimer = Math.max(0, hitStopTimer - dt);
+  return Math.min(dt * 0.12, 0.004);
+}
+
+function getScreenShakeOffset() {
+  if (screenShake.time <= 0 || screenShake.duration <= 0 || screenShake.intensity <= 0) {
+    return { x: 0, y: 0 };
+  }
+  const ratio = clamp(screenShake.time / screenShake.duration, 0, 1);
+  const intensity = screenShake.intensity * ratio * ratio;
+  return {
+    x: randomRange(-intensity, intensity),
+    y: randomRange(-intensity, intensity)
+  };
 }
 
 function createMazeModeMap(seed, floor) {
@@ -2288,6 +3070,12 @@ function draw() {
     return;
   }
 
+  if (gameState === STATE.RECORDS) {
+    drawRecords();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return;
+  }
+
   if (gameState === STATE.OPTIONS && (!player || previousGameState !== STATE.PLAYING)) {
     drawMenu();
     drawOptionsMenu();
@@ -2297,7 +3085,9 @@ function draw() {
 
   ctx.save();
   const zoom = getCameraZoom();
+  const shake = getScreenShakeOffset();
   ctx.scale(zoom, zoom);
+  ctx.translate(shake.x / zoom, shake.y / zoom);
   ctx.translate(-Math.round(camera.x), -Math.round(camera.y));
   drawArena();
   drawEnvironmentProps(false);
@@ -2497,7 +3287,8 @@ function drawPlayer(activePlayer = player) {
   }
 
   ctx.save();
-  ctx.strokeStyle = activePlayer.color || "#75d7ff";
+  const playerColor = isArmyVsMode() && activePlayer.team ? VS_TEAM_COLORS[activePlayer.team] : activePlayer.color || "#75d7ff";
+  ctx.strokeStyle = playerColor;
   ctx.lineWidth = activePlayer.id === localPlayerId ? 4 : 3;
   ctx.globalAlpha = activePlayer.health > 0 ? 0.85 : 0.35;
   ctx.beginPath();
@@ -2533,10 +3324,10 @@ function drawPlayer(activePlayer = player) {
   ctx.globalAlpha = 1;
 
   if (sessionMode !== SESSION.SINGLE) {
-    ctx.fillStyle = activePlayer.color || "#f4f6f8";
+    ctx.fillStyle = playerColor || "#f4f6f8";
     ctx.font = "800 13px system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(activePlayer.name || activePlayer.id, activePlayer.x, activePlayer.y - 44);
+    ctx.fillText(isArmyVsMode() ? activePlayer.teamLabel || activePlayer.name || activePlayer.id : activePlayer.name || activePlayer.id, activePlayer.x, activePlayer.y - 44);
     ctx.textAlign = "left";
   }
 }
@@ -2591,10 +3382,47 @@ function drawEnemies() {
   for (const enemy of enemies) {
     const sprite = SPRITES.enemies[enemy.kind] || SPRITES.enemies.skeleton1;
     const frame = Math.floor((performance.now() / 95 + enemy.animOffset) % sprite.frames);
+    if (isArmyVsMode() && enemy.team) {
+      ctx.save();
+      const color = VS_TEAM_COLORS[enemy.team] || "#f4f6f8";
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(enemy.x, enemy.y + 10, enemy.size * 0.78, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      ctx.fillRect(enemy.x - 5, enemy.y - enemy.size - 13, 10, 10);
+      if (enemy.isMiniBoss) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(enemy.x - 21, enemy.y - 34, 42, 48);
+      }
+      ctx.restore();
+    }
+    if (enemy.isBoss) {
+      const pulse = 1 + Math.sin(performance.now() / 180) * 0.04;
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "#ff4f7a";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.ellipse(enemy.x, enemy.y + 19, enemy.size * 0.74 * pulse, enemy.size * 0.28, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      if ((enemy.slamFlash || 0) > 0) {
+        ctx.globalAlpha = 0.28;
+        ctx.fillStyle = "#ff4f7a";
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, BOSS_SLAM_RADIUS * clamp(enemy.slamFlash / 0.28, 0, 1), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
     if (enemy.hitFlash > 0) {
       ctx.globalAlpha = 0.58;
       ctx.fillStyle = "#ffd166";
-      ctx.fillRect(enemy.x - 22, enemy.y - 28, 44, 48);
+      const flashSize = enemy.isBoss ? 68 : 44;
+      ctx.fillRect(enemy.x - flashSize / 2, enemy.y - flashSize * 0.62, flashSize, flashSize * 1.08);
       ctx.globalAlpha = 1;
     }
     if ((enemy.magicFlash || 0) > 0 || (enemy.burnTimer || enemy.slowTimer || enemy.stunTimer || enemy.rootTimer) > 0) {
@@ -2606,9 +3434,9 @@ function drawEnemies() {
       ctx.globalAlpha = 1;
     }
 
-    drawSpriteFrame(sprite.image, sprite.frameWidth, sprite.frameHeight, frame, enemy.x, enemy.y - 4, sprite.scale);
+    drawSpriteFrame(sprite.image, sprite.frameWidth, sprite.frameHeight, frame, enemy.x, enemy.y - 4, enemy.isBoss ? sprite.scale * 1.55 : sprite.scale);
 
-    if (enemy.maxHealth > 1) {
+    if (enemy.maxHealth > 1 && !enemy.isBoss) {
       const barWidth = enemy.size + 8;
       const healthRatio = clamp(enemy.health / enemy.maxHealth, 0, 1);
       ctx.fillStyle = "#2b3138";
@@ -2723,6 +3551,10 @@ function drawModeChoiceOverlay() {
 
 function drawHud() {
   if (!player) return;
+  if (isArmyVsMode()) {
+    drawArmyVsHud();
+    return;
+  }
   const healthRatio = clamp(player.health / player.maxHealth, 0, 1);
   const xpRatio = clamp(player.xp / player.xpToNext, 0, 1);
 
@@ -2770,6 +3602,83 @@ function drawHud() {
     ctx.fillText("Wave cleared", WIDTH / 2, 124);
     ctx.textAlign = "left";
   }
+
+  drawBossHealthBar();
+}
+
+function drawArmyVsHud() {
+  const redPlayer = getPlayerByTeam(VS_TEAM_RED) || players[0];
+  const bluePlayer = getPlayerByTeam(VS_TEAM_BLUE) || players[1];
+  const redHealth = redPlayer ? clamp(redPlayer.health / redPlayer.maxHealth, 0, 1) : 0;
+  const blueHealth = bluePlayer ? clamp(bluePlayer.health / bluePlayer.maxHealth, 0, 1) : 0;
+  ctx.save();
+  ctx.fillStyle = "rgba(8, 11, 16, 0.82)";
+  ctx.fillRect(28, 24, 460, 88);
+  ctx.fillRect(WIDTH - 488, 24, 460, 88);
+  ctx.strokeStyle = VS_TEAM_COLORS[VS_TEAM_RED];
+  ctx.lineWidth = 3;
+  ctx.strokeRect(28, 24, 460, 88);
+  ctx.strokeStyle = VS_TEAM_COLORS[VS_TEAM_BLUE];
+  ctx.strokeRect(WIDTH - 488, 24, 460, 88);
+  ctx.fillStyle = VS_TEAM_COLORS[VS_TEAM_RED];
+  ctx.font = "900 20px system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("RED ARMY", 48, 54);
+  drawBar(48, 66, 250, 16, redHealth, VS_TEAM_COLORS[VS_TEAM_RED]);
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "800 13px system-ui, sans-serif";
+  ctx.fillText(`HP ${Math.ceil(redPlayer?.health || 0)} / ${redPlayer?.maxHealth || 100}`, 310, 79);
+  ctx.fillText(`Army ${getArmyCount(VS_TEAM_RED)}`, 48, 100);
+
+  ctx.textAlign = "right";
+  ctx.fillStyle = VS_TEAM_COLORS[VS_TEAM_BLUE];
+  ctx.font = "900 20px system-ui, sans-serif";
+  ctx.fillText("BLUE ARMY", WIDTH - 48, 54);
+  drawBar(WIDTH - 298, 66, 250, 16, blueHealth, VS_TEAM_COLORS[VS_TEAM_BLUE]);
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "800 13px system-ui, sans-serif";
+  ctx.fillText(`HP ${Math.ceil(bluePlayer?.health || 0)} / ${bluePlayer?.maxHealth || 100}`, WIDTH - 310, 79);
+  ctx.fillText(`Army ${getArmyCount(VS_TEAM_BLUE)}`, WIDTH - 48, 100);
+
+  ctx.textAlign = "center";
+  const countdown = Math.ceil(modeState.reinforcementTimer || 0);
+  ctx.fillStyle = countdown <= 5 ? "#ffd166" : "#f4f6f8";
+  ctx.font = "900 22px system-ui, sans-serif";
+  ctx.fillText(`Army Wave ${modeState.armyWave || 1}`, WIDTH / 2, 48);
+  ctx.font = "800 16px system-ui, sans-serif";
+  ctx.fillText(countdown <= 5 ? `Reinforcements incoming: ${countdown}` : `Next reinforcements: ${countdown}s`, WIDTH / 2, 76);
+  if (sessionMode !== SESSION.SINGLE) {
+    ctx.fillStyle = "#cbd5df";
+    ctx.font = "700 13px system-ui, sans-serif";
+    ctx.fillText(sessionMode === SESSION.HOST ? "Host authoritative VS" : "Client rendering host VS", WIDTH / 2, 99);
+  }
+  ctx.restore();
+}
+
+function drawBossHealthBar() {
+  const boss = getActiveBoss();
+  if (!boss) return;
+  const width = clamp(WIDTH - 360, 260, 460);
+  const height = 18;
+  const x = WIDTH / 2 - width / 2;
+  const y = 82;
+  const ratio = clamp(boss.health / boss.maxHealth, 0, 1);
+  ctx.save();
+  ctx.fillStyle = "rgba(8, 11, 16, 0.84)";
+  ctx.fillRect(x - 12, y - 30, width + 24, 58);
+  ctx.strokeStyle = "#ff4f7a";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x - 12, y - 30, width + 24, 58);
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "900 16px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(boss.bossName || BOSS_NAME, WIDTH / 2, y - 10);
+  drawBar(x, y, width, height, ratio, "#ff4f7a");
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "800 12px system-ui, sans-serif";
+  ctx.fillText(`${Math.ceil(boss.health)} / ${boss.maxHealth}`, WIDTH / 2, y + 13);
+  ctx.textAlign = "left";
+  ctx.restore();
 }
 
 function drawMobileControls() {
@@ -2835,18 +3744,23 @@ function drawMagicButtons() {
 }
 
 function getModeHudTitle() {
+  if (currentGameMode === GAME_MODE.ARMY_VS) return "Army VS";
   if (currentGameMode === GAME_MODE.MAZE) return `Maze F${modeState.floor || 1}`;
   if (currentGameMode === GAME_MODE.DUNGEON) return "Dungeon";
   return `Wave ${wave}`;
 }
 
 function getModeObjectiveText() {
+  if (currentGameMode === GAME_MODE.ARMY_VS) return "Defeat the opposing player";
   if (currentGameMode === GAME_MODE.MAZE) {
+    if (isBossGateActive() && modeState.floor === 5) return "Defeat the boss to open the floor 5 portal";
+    if (isBossGateActive() && modeState.floor === 10) return "Defeat the boss to open the final portal";
     if (modeState.choicePending) return "Floor 5 portal: choose Exit or Continue";
     if ((modeState.floor || 1) >= 10) return "Find the final portal to extract";
     return `Find the portal to floor ${(modeState.floor || 1) + 1}`;
   }
   if (currentGameMode === GAME_MODE.DUNGEON) {
+    if (isBossGateActive() && !modeState.hasRelic) return "Defeat the boss guarding the relic";
     return modeState.hasRelic ? "Relic secured: return to the exit" : "Find the relic";
   }
   return "Survive the arena";
@@ -3035,6 +3949,13 @@ function formatMultiplier(value) {
   return `${Number(value).toFixed(2).replace(/\.?0+$/, "")}x`;
 }
 
+function formatDuration(seconds) {
+  const totalSeconds = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
 function truncateText(text, maxLength) {
   const value = String(text || "");
   return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
@@ -3060,8 +3981,9 @@ function drawMenu() {
   ctx.font = "800 18px system-ui, sans-serif";
   ctx.fillStyle = "#f4f6f8";
   ctx.fillText("Game Mode", WIDTH / 2, 392);
-  for (let i = 0; i < GAME_MODE_DEFINITIONS.length; i += 1) {
-    const mode = GAME_MODE_DEFINITIONS[i];
+  const playableModes = GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS);
+  for (let i = 0; i < playableModes.length; i += 1) {
+    const mode = playableModes[i];
     const x = WIDTH / 2 - 330 + i * 230;
     const button = drawToggleButton(x, 410, 200, 50, mode.label, selectedGameMode === mode.id);
     ctx.fillStyle = selectedGameMode === mode.id ? "#f4f6f8" : "#cbd5df";
@@ -3073,8 +3995,10 @@ function drawMenu() {
   menuButton = drawButton(WIDTH / 2 - 330, 506, 200, 56, "Single Player");
   hostButton = drawButton(WIDTH / 2 - 100, 506, 200, 56, "Host Co-op");
   joinButton = drawButton(WIDTH / 2 + 130, 506, 200, 56, "Join Co-op");
-  shopButton = drawButton(WIDTH / 2 - 220, 580, 200, 54, "Shop");
-  equipmentButton = drawButton(WIDTH / 2 + 20, 580, 200, 54, "Equipment");
+  shopButton = drawButton(WIDTH / 2 - 330, 580, 200, 54, "Shop");
+  equipmentButton = drawButton(WIDTH / 2 - 100, 580, 200, 54, "Equipment");
+  recordsButton = drawButton(WIDTH / 2 + 130, 580, 200, 54, "Records");
+  armyVsButton = drawButton(WIDTH / 2 - 150, 654, 300, 54, "Host Army VS");
   ctx.textAlign = "left";
 }
 
@@ -3113,7 +4037,7 @@ function drawHostLobby() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   ctx.font = "800 50px system-ui, sans-serif";
-  ctx.fillText("Host Co-op Lobby", WIDTH / 2, 170);
+  ctx.fillText(selectedGameMode === GAME_MODE.ARMY_VS ? "Host Army VS Lobby" : "Host Co-op Lobby", WIDTH / 2, 170);
   ctx.font = "700 22px system-ui, sans-serif";
   ctx.fillStyle = "#75d7ff";
   ctx.fillText(`${hostIpAddress}:${NETWORK_PORT}`, WIDTH / 2, 214);
@@ -3123,6 +4047,11 @@ function drawHostLobby() {
   ctx.fillStyle = "#ffd166";
   ctx.font = "800 18px system-ui, sans-serif";
   ctx.fillText(`Mode: ${getGameModeDefinition(selectedGameMode).label}`, WIDTH / 2, 272);
+  if (selectedGameMode === GAME_MODE.ARMY_VS) {
+    ctx.fillStyle = "#cbd5df";
+    ctx.font = "700 15px system-ui, sans-serif";
+    ctx.fillText("2-player PvPvE: RED host vs BLUE client", WIDTH / 2, 296);
+  }
 
   ctx.fillStyle = "#202832";
   ctx.fillRect(WIDTH / 2 - 260, 282, 520, 270);
@@ -3131,13 +4060,15 @@ function drawHostLobby() {
   ctx.strokeRect(WIDTH / 2 - 260, 282, 520, 270);
   ctx.fillStyle = "#f4f6f8";
   ctx.font = "800 22px system-ui, sans-serif";
-  ctx.fillText(`Players ${lobbyPlayers.length} / ${MAX_COOP_PLAYERS}`, WIDTH / 2, 326);
+  const maxLobbyPlayers = getLobbyMaxPlayers();
+  ctx.fillText(`Players ${lobbyPlayers.length} / ${maxLobbyPlayers}`, WIDTH / 2, 326);
 
   ctx.font = "700 18px system-ui, sans-serif";
-  for (let i = 0; i < MAX_COOP_PLAYERS; i += 1) {
+  for (let i = 0; i < maxLobbyPlayers; i += 1) {
     const lobbyPlayer = lobbyPlayers[i];
-    const label = lobbyPlayer ? `${lobbyPlayer.id.toUpperCase()}  ${lobbyPlayer.name}` : `P${i + 1}  Waiting...`;
-    ctx.fillStyle = lobbyPlayer ? PLAYER_COLORS[i] : "#7b8a99";
+    const teamLabel = selectedGameMode === GAME_MODE.ARMY_VS ? (i === 0 ? "RED ARMY" : "BLUE ARMY") : `P${i + 1}`;
+    const label = lobbyPlayer ? `${teamLabel}  ${lobbyPlayer.name}` : `${teamLabel}  Waiting...`;
+    ctx.fillStyle = selectedGameMode === GAME_MODE.ARMY_VS ? (i === 0 ? VS_TEAM_COLORS[VS_TEAM_RED] : VS_TEAM_COLORS[VS_TEAM_BLUE]) : lobbyPlayer ? PLAYER_COLORS[i] : "#7b8a99";
     ctx.fillText(label, WIDTH / 2, 370 + i * 34);
   }
 
@@ -3147,7 +4078,8 @@ function drawHostLobby() {
   hostLobbyButtons.rate45 = drawToggleButton(WIDTH / 2 - 185, 604, 170, 48, "45Hz Default", hostSnapshotRate === 45);
   hostLobbyButtons.rate60 = drawToggleButton(WIDTH / 2 + 15, 604, 170, 48, "60Hz Smooth", hostSnapshotRate === 60);
 
-  hostLobbyButtons.start = drawButton(WIDTH / 2 - 220, 704, 200, 56, "Start Game", !NativeLocalNetwork);
+  const startDisabled = !NativeLocalNetwork || (selectedGameMode === GAME_MODE.ARMY_VS && lobbyPlayers.length < 2);
+  hostLobbyButtons.start = drawButton(WIDTH / 2 - 220, 704, 200, 56, "Start Game", startDisabled);
   hostLobbyButtons.back = drawButton(WIDTH / 2 + 20, 704, 200, 56, "Back");
   ctx.textAlign = "left";
 }
@@ -3374,6 +4306,78 @@ function drawEquipmentCard(x, y, width, height, title, detail, equipped, owned, 
   ctx.fillText(equipped ? "Equipped" : truncateText(detail, 26), x + width / 2, y + height - 18);
 }
 
+function drawRecords() {
+  drawArenaPreview();
+  ctx.fillStyle = "rgba(12, 14, 18, 0.78)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "800 52px system-ui, sans-serif";
+  ctx.fillText("Records", WIDTH / 2, 142);
+  ctx.fillStyle = "#cbd5df";
+  ctx.font = "700 18px system-ui, sans-serif";
+  ctx.fillText("Persistent local run history and high scores", WIDTH / 2, 178);
+
+  const panelX = WIDTH / 2 - 500;
+  const panelY = 222;
+  const panelWidth = 1000;
+  const panelHeight = 486;
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.strokeStyle = "#75d7ff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+
+  const rows = [
+    ["Total Runs", records.totalRuns],
+    ["Total Boss Kills", records.totalBossKills],
+    ["Best Arena Wave", records.bestArenaWave],
+    ["Best Arena Kills", records.bestArenaKills],
+    ["Best Maze Floor", records.bestMazeFloor],
+    ["Maze Extractions", records.totalMazeExtractions],
+    ["Dungeon Extractions", records.totalDungeonExtractions],
+    ["Best Run Points", records.bestRunPoints],
+    ["Best Time", formatDuration(records.bestTimeSurvived)],
+    ["Best Damage Dealt", Math.round(records.bestDamageDealt)]
+  ];
+
+  ctx.font = "800 19px system-ui, sans-serif";
+  for (let i = 0; i < rows.length; i += 1) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = panelX + 82 + col * 500;
+    const y = panelY + 62 + row * 66;
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#9aa7b4";
+    ctx.fillText(rows[i][0], x, y);
+    ctx.fillStyle = "#f4f6f8";
+    ctx.font = "900 28px system-ui, sans-serif";
+    ctx.fillText(String(rows[i][1]), x, y + 32);
+    ctx.font = "800 19px system-ui, sans-serif";
+  }
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffd166";
+  ctx.font = "800 18px system-ui, sans-serif";
+  ctx.fillText("Recent Runs", WIDTH / 2, 608);
+  const recentRuns = (records.recentRuns || []).slice(0, 3);
+  if (recentRuns.length === 0) {
+    ctx.fillStyle = "#9aa7b4";
+    ctx.font = "700 15px system-ui, sans-serif";
+    ctx.fillText("No completed runs recorded yet.", WIDTH / 2, 638);
+  } else {
+    ctx.fillStyle = "#cbd5df";
+    ctx.font = "700 15px system-ui, sans-serif";
+    for (let i = 0; i < recentRuns.length; i += 1) {
+      const run = recentRuns[i];
+      ctx.fillText(`${run.mode} - ${run.result} - ${formatDuration(run.duration)} - Kills ${run.kills} - Bosses ${run.bossKills}`, WIDTH / 2, 636 + i * 24);
+    }
+  }
+
+  recordsBackButton = drawButton(WIDTH / 2 - 105, 756, 210, 54, "Back");
+  ctx.textAlign = "left";
+}
+
 function drawLevelUp() {
   ctx.fillStyle = "rgba(12, 14, 18, 0.82)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -3409,24 +4413,73 @@ function drawLevelUp() {
 }
 
 function drawGameOver() {
+  if (isArmyVsMode()) {
+    drawArmyVsGameOver();
+    return;
+  }
   ctx.fillStyle = "rgba(12, 14, 18, 0.78)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  ctx.font = "800 58px system-ui, sans-serif";
-  ctx.fillText("Game Over", WIDTH / 2, 328);
-  ctx.fillStyle = "#cbd5df";
-  ctx.font = "600 22px system-ui, sans-serif";
-  if (currentGameMode === GAME_MODE.ARENA) {
-    ctx.fillText(`Final wave reached: ${finalWave}`, WIDTH / 2, 374);
-    ctx.fillText(`Kill points banked: ${permanent.killPoints}`, WIDTH / 2, 408);
-  } else {
-    ctx.fillText(`${getGameModeDefinition(currentGameMode).label} run failed`, WIDTH / 2, 374);
-    ctx.fillText(`Run points lost: ${modeState.lostRunPoints || 0}`, WIDTH / 2, 408);
+  ctx.font = "800 54px system-ui, sans-serif";
+  ctx.fillText(lastRunSummary?.heading || "Game Over", WIDTH / 2, 170);
+  ctx.fillStyle = lastRunSummary?.success ? "#8de85c" : "#ffd166";
+  ctx.font = "800 24px system-ui, sans-serif";
+  ctx.fillText(lastRunSummary?.resultLabel || "Run ended", WIDTH / 2, 214);
+
+  const summary = lastRunSummary || createRunSummary("failed", "Run ended", { bankedPoints: 0, lostRunPoints: modeState?.lostRunPoints || 0 }, false);
+  const rows = getRunSummaryRows(summary);
+  const panelX = WIDTH / 2 - 430;
+  const panelY = 254;
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(panelX, panelY, 860, 332);
+  ctx.strokeStyle = summary.success ? "#8de85c" : "#ff4f7a";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX, panelY, 860, 332);
+  ctx.font = "800 18px system-ui, sans-serif";
+  for (let i = 0; i < rows.length; i += 1) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = panelX + 64 + col * 430;
+    const y = panelY + 50 + row * 54;
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#9aa7b4";
+    ctx.fillText(rows[i].label, x, y);
+    ctx.fillStyle = rows[i].record ? "#ffd166" : "#f4f6f8";
+    ctx.font = "900 22px system-ui, sans-serif";
+    ctx.fillText(rows[i].value, x, y + 25);
+    ctx.font = "800 18px system-ui, sans-serif";
   }
 
-  gameOverButton = drawButton(WIDTH / 2 - 130, 460, 260, 54, "Return to Menu");
+  if (summary.records.length > 0) {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "800 18px system-ui, sans-serif";
+    ctx.fillText(`New Record: ${summary.records.join(" / ")}`, WIDTH / 2, 628);
+  }
+
+  gameOverButton = drawButton(WIDTH / 2 - 130, 672, 260, 54, "Return to Menu");
+  ctx.textAlign = "left";
+}
+
+function drawArmyVsGameOver() {
+  ctx.fillStyle = "rgba(12, 14, 18, 0.82)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  const winnerTeam = modeState.winnerTeam;
+  const winnerColor = VS_TEAM_COLORS[winnerTeam] || "#ffd166";
+  ctx.textAlign = "center";
+  ctx.fillStyle = winnerColor;
+  ctx.font = "900 64px system-ui, sans-serif";
+  ctx.fillText(modeState.winnerLabel || "ARMY VS COMPLETE", WIDTH / 2, 278);
+  ctx.fillStyle = "#cbd5df";
+  ctx.font = "800 22px system-ui, sans-serif";
+  ctx.fillText(`Final Army Wave ${modeState.armyWave || 1}`, WIDTH / 2, 334);
+  ctx.fillText(`RED Army ${getArmyCount(VS_TEAM_RED)}  vs  BLUE Army ${getArmyCount(VS_TEAM_BLUE)}`, WIDTH / 2, 370);
+  ctx.fillStyle = "#f4f6f8";
+  ctx.font = "700 18px system-ui, sans-serif";
+  ctx.fillText("No survival rewards are awarded in Army VS.", WIDTH / 2, 416);
+  gameOverButton = drawButton(WIDTH / 2 - 130, 472, 260, 54, "Return to Menu");
   ctx.textAlign = "left";
 }
 
@@ -3559,7 +4612,8 @@ function burst(x, y, color, count) {
 }
 
 function gameLoop(time) {
-  const dt = Math.min((time - lastTime) / 1000 || 0, 0.033);
+  const rawDt = Math.min((time - lastTime) / 1000 || 0, 0.033);
+  const dt = consumeHitStopDt(rawDt);
   lastTime = time;
   update(dt);
   draw();
@@ -3623,7 +4677,7 @@ function handleCanvasClick() {
 
     if (hostButton && pointInRect(mouse.x, mouse.y, hostButton.x, hostButton.y, hostButton.width, hostButton.height)) {
       mouse.down = false;
-      openHostLobby();
+      openHostLobby(getSelectedPlayableMode());
       return;
     }
 
@@ -3642,6 +4696,18 @@ function handleCanvasClick() {
     if (equipmentButton && pointInRect(mouse.x, mouse.y, equipmentButton.x, equipmentButton.y, equipmentButton.width, equipmentButton.height)) {
       mouse.down = false;
       gameState = STATE.EQUIPMENT;
+      return;
+    }
+
+    if (recordsButton && pointInRect(mouse.x, mouse.y, recordsButton.x, recordsButton.y, recordsButton.width, recordsButton.height)) {
+      mouse.down = false;
+      gameState = STATE.RECORDS;
+      return;
+    }
+
+    if (armyVsButton && pointInRect(mouse.x, mouse.y, armyVsButton.x, armyVsButton.y, armyVsButton.width, armyVsButton.height)) {
+      mouse.down = false;
+      openArmyVsLobby();
       return;
     }
   }
@@ -3742,6 +4808,14 @@ function handleCanvasClick() {
       }
     }
     if (equipmentBackButton && pointInRect(mouse.x, mouse.y, equipmentBackButton.x, equipmentBackButton.y, equipmentBackButton.width, equipmentBackButton.height)) {
+      mouse.down = false;
+      gameState = STATE.MENU;
+      return;
+    }
+  }
+
+  if (gameState === STATE.RECORDS) {
+    if (recordsBackButton && pointInRect(mouse.x, mouse.y, recordsBackButton.x, recordsBackButton.y, recordsBackButton.width, recordsBackButton.height)) {
       mouse.down = false;
       gameState = STATE.MENU;
       return;
@@ -4288,15 +5362,16 @@ function setupNetworkListeners() {
   NativeLocalNetwork.addListener("lobbyDiscovered", handleLobbyDiscovered);
 }
 
-async function openHostLobby() {
+async function openHostLobby(modeId = selectedGameMode) {
   stopDiscoverySearch();
   resetMobileControls();
   mouse.down = false;
+  selectedGameMode = getGameModeDefinition(modeId).id;
   sessionMode = SESSION.HOST;
   localPlayerId = "p1";
   player = undefined;
   players = [];
-  lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier, weaponId: permanent.weaponId, magicIds: permanent.equippedMagicIds }];
+  lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier, weaponId: permanent.weaponId, magicIds: permanent.equippedMagicIds, team: selectedGameMode === GAME_MODE.ARMY_VS ? VS_TEAM_RED : null }];
   hostSnapshotRate = DEFAULT_HOST_SNAPSHOT_RATE;
   pendingClientIds.clear();
   remoteInputs.clear();
@@ -4390,6 +5465,7 @@ function leaveLobbyToMenu() {
   resetMobileControls();
   mouse.down = false;
   sessionMode = SESSION.SINGLE;
+  selectedGameMode = getSelectedPlayableMode();
   gameState = STATE.MENU;
   lobbyPlayers = [];
   pendingClientIds.clear();
@@ -4404,13 +5480,19 @@ function startHostCoopGame() {
     networkStatus = "Android APK required to host local WiFi co-op";
     return;
   }
+  if (selectedGameMode === GAME_MODE.ARMY_VS && lobbyPlayers.length < 2) {
+    networkStatus = "Army VS needs one opponent before starting";
+    return;
+  }
   resetMobileControls();
   stopDiscoveryBroadcast();
   mouse.down = false;
   prepareModeRun(selectedGameMode);
   players = lobbyPlayers.map((lobbyPlayer, index) => createPlayer(lobbyPlayer.id, lobbyPlayer.name, index, lobbyPlayer.swordTier, lobbyPlayer.weaponId, lobbyPlayer.magicIds));
+  configureArmyVsPlayers();
   player = players.find((activePlayer) => activePlayer.id === localPlayerId) || players[0];
   resetRunState();
+  beginRunStats();
   gameState = STATE.PLAYING;
   startModeCombat();
   broadcastNetworkMessage({ type: "start", localPlayerId: null, snapshot: createSnapshot() });
@@ -4423,7 +5505,24 @@ function startClientCoopGame(snapshot) {
   levelUpChoices = [];
   resetMobileControls();
   applySnapshot(snapshot);
+  beginRunStats();
   networkStatus = "In co-op match";
+}
+
+function configureArmyVsPlayers() {
+  if (currentGameMode !== GAME_MODE.ARMY_VS) return;
+  for (let i = 0; i < players.length; i += 1) {
+    const activePlayer = players[i];
+    const team = i === 0 ? VS_TEAM_RED : VS_TEAM_BLUE;
+    activePlayer.team = team;
+    activePlayer.teamLabel = team === VS_TEAM_RED ? "RED ARMY" : "BLUE ARMY";
+    activePlayer.color = VS_TEAM_COLORS[team];
+    activePlayer.name = activePlayer.teamLabel;
+  }
+}
+
+function openArmyVsLobby() {
+  openHostLobby(GAME_MODE.ARMY_VS);
 }
 
 function handleNativeNetworkMessage(event) {
@@ -4474,7 +5573,7 @@ function handleHostNetworkMessage(clientId, message) {
 }
 
 function acceptClientHello(clientId, message) {
-  if (lobbyPlayers.length >= MAX_COOP_PLAYERS || gameState === STATE.PLAYING) {
+  if (lobbyPlayers.length >= getLobbyMaxPlayers() || gameState === STATE.PLAYING) {
     sendNetworkMessage({ type: "reject", reason: "Lobby is full or match already started." }, clientId);
     disconnectClient(clientId);
     return;
@@ -4490,12 +5589,12 @@ function acceptClientHello(clientId, message) {
   const swordTier = clamp(Math.round(Number(message.swordTier) || 0), 0, SWORD_TIERS.length - 1);
   const weaponId = getWeaponById(message.weaponId).id;
   const magicIds = sanitizeEquippedMagicIds(message.magicIds);
-  const lobbyPlayer = { id: playerId, name: clientName, clientId, swordTier, weaponId, magicIds };
+  const lobbyPlayer = { id: playerId, name: clientName, clientId, swordTier, weaponId, magicIds, team: selectedGameMode === GAME_MODE.ARMY_VS ? VS_TEAM_BLUE : null };
   lobbyPlayers.push(lobbyPlayer);
   pendingClientIds.delete(clientId);
   clientIdToPlayerId.set(clientId, playerId);
   remoteInputs.set(playerId, createNeutralInput());
-  sendNetworkMessage({ type: "welcome", playerId, lobbyPlayers }, clientId);
+  sendNetworkMessage({ type: "welcome", playerId, lobbyPlayers, mode: selectedGameMode }, clientId);
   broadcastLobbyState();
   networkStatus = `${clientName} joined`;
 }
@@ -4519,12 +5618,14 @@ function handleClientNetworkMessage(message) {
   if (message.type === "welcome") {
     localPlayerId = message.playerId;
     lobbyPlayers = message.lobbyPlayers || [];
+    if (message.mode) selectedGameMode = getGameModeDefinition(message.mode).id;
     networkStatus = `Joined as ${localPlayerId.toUpperCase()}. Waiting for host.`;
     return;
   }
 
   if (message.type === "lobby") {
     lobbyPlayers = message.players || [];
+    if (message.mode) selectedGameMode = getGameModeDefinition(message.mode).id;
     return;
   }
 
@@ -4578,7 +5679,7 @@ function applyClientLevelOffer(message) {
 
 function broadcastLobbyState() {
   if (sessionMode !== SESSION.HOST) return;
-  broadcastNetworkMessage({ type: "lobby", players: lobbyPlayers });
+  broadcastNetworkMessage({ type: "lobby", players: lobbyPlayers, mode: selectedGameMode });
 }
 
 function updateClientSession(dt) {
@@ -4629,20 +5730,33 @@ function createSnapshot() {
   };
 }
 
+function getLobbyMaxPlayers() {
+  return selectedGameMode === GAME_MODE.ARMY_VS ? 2 : MAX_COOP_PLAYERS;
+}
+
 function applySnapshot(snapshot) {
   if (!snapshot) return;
+  const previousBossIds = new Set(enemies.filter((enemy) => enemy.isBoss && enemy.health > 0).map((enemy) => enemy.id));
+  const nextBossIds = new Set((snapshot.enemies || []).filter((enemy) => enemy.isBoss && enemy.health > 0).map((enemy) => enemy.id));
   applyModeSnapshot(snapshot.modeState);
   wave = snapshot.wave || wave;
   finalWave = snapshot.finalWave || finalWave;
   nextWaveTimer = snapshot.nextWaveTimer || 0;
   players = mergePlayersFromSnapshot(snapshot.players || []);
   enemies = mergeEnemiesFromSnapshot(snapshot.enemies || []);
+  for (const previousBossId of previousBossIds) {
+    if (!nextBossIds.has(previousBossId)) {
+      requestScreenShake(6, 0.26);
+      break;
+    }
+  }
   xpOrbs = (snapshot.xpOrbs || []).map((orb) => ({ ...orb }));
   pickups = (snapshot.pickups || []).map((pickup) => ({ ...pickup }));
   chests = (snapshot.chests || []).map((chest) => ({ ...chest }));
   player = players.find((activePlayer) => activePlayer.id === localPlayerId) || players[0];
   if (snapshot.state === STATE.GAME_OVER) {
     gameState = STATE.GAME_OVER;
+    if (isArmyVsMode()) lastRunSummary = null;
   }
   refreshCoopLevelMenu();
   updateCamera();
@@ -4657,6 +5771,7 @@ function animateRemoteSnapshot(dt) {
   for (const enemy of enemies) {
     enemy.hitFlash = Math.max(0, (enemy.hitFlash || 0) - dt);
     enemy.magicFlash = Math.max(0, (enemy.magicFlash || 0) - dt);
+    enemy.slamFlash = Math.max(0, (enemy.slamFlash || 0) - dt);
     enemy.burnTimer = Math.max(0, (enemy.burnTimer || 0) - dt);
     enemy.slowTimer = Math.max(0, (enemy.slowTimer || 0) - dt);
     enemy.stunTimer = Math.max(0, (enemy.stunTimer || 0) - dt);
@@ -4746,6 +5861,11 @@ function mergeEnemiesFromSnapshot(snapshotEnemies) {
       id: snapshotEnemy.id || `snapshot-enemy-${index}`
     };
     const existing = existingById.get(enemySnapshot.id);
+    if (enemySnapshot.isBoss && !existing) {
+      requestScreenShake(5, 0.22);
+    } else if (enemySnapshot.isBoss && existing && Number.isFinite(existing.health) && enemySnapshot.health < existing.health - 0.1) {
+      requestScreenShake(2.2, 0.08);
+    }
     return mergeSnapshotEntity(existing, enemySnapshot, false);
   });
 }
@@ -4798,6 +5918,8 @@ function serializePlayer(activePlayer) {
     moving: activePlayer.moving,
     connected: activePlayer.connected,
     color: activePlayer.color,
+    team: activePlayer.team || null,
+    teamLabel: activePlayer.teamLabel || "",
     swordTier: activePlayer.swordTier,
     weaponId: getWeaponDefinition(activePlayer).id,
     equippedMagicIds: sanitizeEquippedMagicIds(activePlayer.equippedMagicIds),
@@ -4828,7 +5950,15 @@ function serializeEnemy(enemy) {
     slowTimer: roundNet(enemy.slowTimer),
     slowMultiplier: roundNet(enemy.slowMultiplier || 0.45, 2),
     stunTimer: roundNet(enemy.stunTimer),
-    rootTimer: roundNet(enemy.rootTimer)
+    rootTimer: roundNet(enemy.rootTimer),
+    isBoss: Boolean(enemy.isBoss),
+    isMiniBoss: Boolean(enemy.isMiniBoss),
+    team: enemy.team || null,
+    ownerPlayerId: enemy.ownerPlayerId || "",
+    bossName: enemy.bossName || "",
+    bossAttackTimer: roundNet(enemy.bossAttackTimer),
+    bossSummonsLeft: enemy.bossSummonsLeft || 0,
+    slamFlash: roundNet(enemy.slamFlash)
   };
 }
 
@@ -4891,11 +6021,18 @@ function awardModeKillPoint() {
 }
 
 function awardTeamKillPoint() {
-  permanent.killPoints += 1;
+  awardPermanentKillPoints(1);
+}
+
+function awardPermanentKillPoints(amount) {
+  const points = Math.max(0, Math.round(Number(amount) || 0));
+  if (points <= 0) return;
+  permanent.killPoints += points;
+  if (currentRunStats) currentRunStats.pointsEarned += points;
   savePermanentProgress();
   if (sessionMode === SESSION.HOST) {
     const eventId = `host-${Date.now()}-${rewardEventCounter += 1}`;
-    broadcastNetworkMessage({ type: "rewardDelta", eventId, amount: 1 });
+    broadcastNetworkMessage({ type: "rewardDelta", eventId, amount: points });
   }
 }
 
