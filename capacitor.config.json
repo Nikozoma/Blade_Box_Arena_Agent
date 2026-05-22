@@ -1,6 +1,6 @@
 {
   "appId": "com.nick.bladeboxarena_agent",
-  "appName": "Blade Box Arena",
+  "appName": "Blade Box Arena: Agent",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
