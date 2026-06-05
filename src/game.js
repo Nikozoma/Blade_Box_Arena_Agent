@@ -31,6 +31,7 @@ const STATE = {
   HOST_LOBBY: "hostLobby",
   JOIN_LOBBY: "joinLobby",
   PLAYING: "playing",
+  ONLINE_LOBBY: "onlineLobby",
   OPTIONS: "options",
   LEVEL_UP: "levelUp",
   GAME_OVER: "gameOver"
@@ -395,7 +396,7 @@ const TILE = {
 
 let DUNGEON_MAP = createDungeonMap();
 
-const MAP = {
+let MAP = {
   cols: DUNGEON_MAP[0].length,
   rows: DUNGEON_MAP.length,
   tileSize: TILE.drawSize
@@ -483,7 +484,9 @@ const mobileInput = {
   aim: createJoystickState(),
   attackActive: false
 };
+const APP_CONFIG = normalizeAppConfig(window.BLADE_BOX_ARENA_CONFIG);
 const NativeLocalNetwork = getNativeLocalNetworkPlugin();
+const runtimeCapabilities = detectRuntimeCapabilities();
 const settings = {
   zoom: loadSavedZoom(),
   fontScale: loadSavedFontScale()
@@ -517,6 +520,7 @@ let shopButton;
 let equipmentButton;
 let hostButton;
 let joinButton;
+let onlineButton;
 let armyVsButton;
 let modeButtons = [];
 let shopBackButton;
@@ -537,6 +541,7 @@ let optionsSliders = [];
 let activeOptionsSlider = null;
 let hostLobbyButtons = {};
 let joinLobbyButtons = {};
+let onlineLobbyButtons = {};
 let levelUpButton;
 let touchInputSeen = false;
 let previousGameState = STATE.MENU;
@@ -550,6 +555,9 @@ let hostIpAddress = "Unavailable";
 let networkStatus = NativeLocalNetwork ? "Ready" : "Android APK required for local WiFi co-op";
 let joinHostAddress = loadLastHostAddress();
 let joinPort = NETWORK_PORT;
+let onlineStatus = "Online rooms use a configurable relay server.";
+let onlineRoomCode = "";
+let activeNetworkTransport = null;
 let discoveredLobbies = [];
 let snapshotTimer = 0;
 let hostSnapshotRate = DEFAULT_HOST_SNAPSHOT_RATE;
@@ -579,6 +587,8 @@ const networkDebug = {
   lastBytesIn: 0,
   lastBytesOut: 0
 };
+const nativeLanTransport = createNativeLanTransport();
+const onlineServerTransport = createOnlineServerTransport();
 
 resizeCanvasToDisplaySize(true);
 
@@ -633,9 +643,8 @@ function createJoystickState() {
 }
 
 function resizeCanvasToDisplaySize(force = false) {
-  const rect = canvas.getBoundingClientRect();
-  const displayWidth = Math.max(320, Math.round(rect.width || canvas.clientWidth || DESIGN_WIDTH));
-  const displayHeight = Math.max(240, Math.round(rect.height || canvas.clientHeight || DESIGN_HEIGHT));
+  const displayWidth = Math.max(320, Math.round(window.innerWidth || document.documentElement.clientWidth || DESIGN_WIDTH));
+  const displayHeight = Math.max(240, Math.round(window.innerHeight || document.documentElement.clientHeight || DESIGN_HEIGHT));
   const aspect = displayWidth / displayHeight;
   const designAspect = DESIGN_WIDTH / DESIGN_HEIGHT;
   const nextScale = aspect >= designAspect ? displayHeight / DESIGN_HEIGHT : displayWidth / DESIGN_WIDTH;
@@ -643,6 +652,8 @@ function resizeCanvasToDisplaySize(force = false) {
   const nextHeight = displayHeight / nextScale;
   const changed = canvas.width !== displayWidth
     || canvas.height !== displayHeight
+    || canvas.style.width !== `${displayWidth}px`
+    || canvas.style.height !== `${displayHeight}px`
     || Math.abs(WIDTH - nextWidth) > 0.5
     || Math.abs(HEIGHT - nextHeight) > 0.5
     || Math.abs(RENDER_SCALE - nextScale) > 0.0001;
@@ -651,6 +662,8 @@ function resizeCanvasToDisplaySize(force = false) {
 
   canvas.width = displayWidth;
   canvas.height = displayHeight;
+  canvas.style.width = `${displayWidth}px`;
+  canvas.style.height = `${displayHeight}px`;
   WIDTH = nextWidth;
   HEIGHT = nextHeight;
   RENDER_SCALE = nextScale;
@@ -753,8 +766,8 @@ function startModeCombat() {
     return;
   }
   const startingCount = currentGameMode === GAME_MODE.MAZE
-    ? 3 + Math.floor(getModeDepth() * 0.8)
-    : 6;
+    ? clamp(4 + Math.floor(getModeDepth() * 0.9), 4, getMazeFloorConfig(getModeDepth()).enemyCap)
+    : 8;
   for (let i = 0; i < startingCount; i += 1) {
     enemies.push(createEnemy(i));
   }
@@ -1190,7 +1203,10 @@ function openChest(chest, opener = player) {
 }
 
 function chooseChestUnlockReward() {
-  if (Math.random() >= 0.1) return null;
+  const unlockChance = currentGameMode === GAME_MODE.MAZE
+    ? getMazeFloorConfig(modeState.floor || 1).chestUnlockChance
+    : 0.1;
+  if (Math.random() >= unlockChance) return null;
   return chooseGuaranteedItemUnlock();
 }
 
@@ -1994,7 +2010,7 @@ function createModeState(modeId, options = {}) {
   const mode = getGameModeDefinition(modeId).id;
   const seed = Number.isFinite(options.seed) ? Math.round(options.seed) : Math.floor(Math.random() * 1_000_000_000);
   if (mode === GAME_MODE.MAZE) {
-    const floor = clamp(Math.round(Number(options.floor) || 1), 1, 10);
+    const floor = Math.max(1, Math.round(Number(options.floor) || 1));
     const generated = createMazeModeMap(seed, floor);
     return {
       mode,
@@ -2124,7 +2140,7 @@ function shouldSpawnArenaBoss() {
 
 function shouldSpawnModeBoss() {
   if (currentGameMode === GAME_MODE.MAZE) {
-    return modeState.floor === 5 || modeState.floor === 10;
+    return isMazeCheckpointFloor(modeState.floor || 1);
   }
   if (currentGameMode === GAME_MODE.DUNGEON) {
     return Boolean(modeState.relic);
@@ -2205,6 +2221,11 @@ function getSelectedPlayableMode() {
 function applyModeMap(nextModeState) {
   if (!nextModeState?.map || lastAppliedMapKey === nextModeState.mapKey) return;
   DUNGEON_MAP = nextModeState.map;
+  MAP = {
+    cols: DUNGEON_MAP[0]?.length || 0,
+    rows: DUNGEON_MAP.length,
+    tileSize: TILE.drawSize
+  };
   lastAppliedMapKey = nextModeState.mapKey;
   flowField = [];
   flowFieldsByPlayer = new Map();
@@ -2268,8 +2289,27 @@ function getModeDepth() {
   return wave;
 }
 
+function isMazeCheckpointFloor(floor) {
+  const floorNumber = Math.max(1, Math.round(Number(floor) || 1));
+  return floorNumber % 5 === 0;
+}
+
+function getMazeFloorConfig(floor) {
+  const floorNumber = Math.max(1, Math.round(Number(floor) || 1));
+  const tier = Math.floor((floorNumber - 1) / 5);
+  return {
+    floor: floorNumber,
+    tier,
+    roomCount: 10 + Math.min(70, floorNumber + tier * 2),
+    rewardPoints: 1 + tier,
+    chestUnlockChance: clamp(0.1 + tier * 0.025, 0.1, 0.35),
+    enemyCap: clamp(6 + Math.floor(floorNumber * 1.1), 7, 28),
+    spawnInterval: Math.max(0.75, 3.4 - floorNumber * 0.1)
+  };
+}
+
 function getRunPointReward() {
-  if (currentGameMode === GAME_MODE.MAZE) return modeState.floor >= 6 ? 3 : 1;
+  if (currentGameMode === GAME_MODE.MAZE) return getMazeFloorConfig(modeState.floor || 1).rewardPoints;
   if (currentGameMode === GAME_MODE.DUNGEON) return 2;
   return 1;
 }
@@ -2342,38 +2382,36 @@ function finishArmyVsMatch(winnerTeam) {
 function updateExplorationEnemyPressure(dt) {
   modeState.spawnTimer = Math.max(0, (modeState.spawnTimer || 0) - dt);
   const depth = getModeDepth();
-  const maxEnemies = currentGameMode === GAME_MODE.MAZE ? clamp(4 + Math.floor(depth * 0.9), 5, 13) : 8;
+  const maxEnemies = currentGameMode === GAME_MODE.MAZE ? getMazeFloorConfig(depth).enemyCap : 11;
   if (modeState.spawnTimer > 0 || enemies.length >= maxEnemies) return;
   enemies.push(createEnemy(enemyIdCounter + 1));
-  modeState.spawnTimer = currentGameMode === GAME_MODE.MAZE ? Math.max(1.2, 4.2 - depth * 0.18) : 3.4;
+  modeState.spawnTimer = currentGameMode === GAME_MODE.MAZE ? getMazeFloorConfig(depth).spawnInterval : 2.5;
 }
 
 function updateMazeObjective() {
   if (!modeState.portal) return;
-  if (isBossGateActive() && (modeState.floor === 5 || modeState.floor === 10)) return;
+  const currentFloor = Math.max(1, modeState.floor || 1);
+  if (isBossGateActive() && isMazeCheckpointFloor(currentFloor)) return;
   const activatingPlayer = getLivingPlayers().find((activePlayer) => distance(activePlayer.x, activePlayer.y, modeState.portal.x, modeState.portal.y) < 38);
   if (!activatingPlayer) return;
-  if (modeState.floor === 5 && !modeState.continued) {
+  if (isMazeCheckpointFloor(currentFloor)) {
     modeState.choicePending = true;
     resetMobileControls();
     mouse.down = false;
     return;
   }
-  if (modeState.floor >= 10) {
-    completeCurrentRun("Maze cleared");
-    return;
-  }
-  advanceMazeFloor(modeState.floor + 1);
+  advanceMazeFloor(currentFloor + 1);
 }
 
 function advanceMazeFloor(nextFloor) {
+  const floorNumber = Math.max(1, Math.round(Number(nextFloor) || 1));
   if (currentRunStats) {
-    currentRunStats.highestMazeFloor = Math.max(currentRunStats.highestMazeFloor || 1, nextFloor);
+    currentRunStats.highestMazeFloor = Math.max(currentRunStats.highestMazeFloor || 1, floorNumber);
   }
   const runPoints = modeState.runPoints || 0;
-  const continued = modeState.continued || nextFloor > 5;
-  const seed = (modeState.seed || 1) + nextFloor * 7919;
-  prepareModeRun(GAME_MODE.MAZE, { floor: nextFloor, seed, runPoints, continued });
+  const continued = modeState.continued || floorNumber > 5;
+  const seed = (modeState.seed || 1) + floorNumber * 7919;
+  prepareModeRun(GAME_MODE.MAZE, { floor: floorNumber, seed, runPoints, continued });
   movePlayersToModeSpawns();
   enemies = [];
   xpOrbs = [];
@@ -2420,7 +2458,7 @@ function chooseMazeContinue() {
   if (currentGameMode !== GAME_MODE.MAZE || !modeState.choicePending) return;
   modeState.choicePending = false;
   modeState.continued = true;
-  advanceMazeFloor(6);
+  advanceMazeFloor((modeState.floor || 1) + 1);
 }
 
 function chooseMazeExit() {
@@ -2798,9 +2836,11 @@ function getScreenShakeOffset() {
 }
 
 function createMazeModeMap(seed, floor) {
-  const cols = 84;
-  const rows = 60;
-  const rng = createSeededRandom(seed + floor * 997);
+  const floorConfig = getMazeFloorConfig(floor);
+  const sizeStep = Math.min(5, Math.floor((floorConfig.floor - 1) / 5));
+  const cols = 84 + sizeStep * 4;
+  const rows = 60 + sizeStep * 3;
+  const rng = createSeededRandom(seed + floorConfig.floor * 997);
   const grid = Array.from({ length: rows }, () => Array(cols).fill(" "));
   const start = { col: 5, row: 5 };
   carveRect(grid, 3, 3, 7, 7);
@@ -2825,7 +2865,7 @@ function createMazeModeMap(seed, floor) {
     }
     if (!carved) stack.pop();
   }
-  for (let i = 0; i < 10 + floor; i += 1) {
+  for (let i = 0; i < floorConfig.roomCount; i += 1) {
     const roomCol = 8 + Math.floor(rng() * (cols - 18));
     const roomRow = 8 + Math.floor(rng() * (rows - 18));
     carveRect(grid, roomCol, roomRow, 5 + Math.floor(rng() * 5), 4 + Math.floor(rng() * 4));
@@ -3051,6 +3091,12 @@ function draw() {
 
   if (gameState === STATE.JOIN_LOBBY) {
     drawJoinLobby();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return;
+  }
+
+  if (gameState === STATE.ONLINE_LOBBY) {
+    drawOnlineLobby();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3483,7 +3529,7 @@ function drawModeObjects() {
   if (currentGameMode === GAME_MODE.MAZE && modeState.portal) {
     const pulse = 0.75 + Math.sin(performance.now() / 220) * 0.16;
     ctx.save();
-    ctx.strokeStyle = modeState.floor >= 6 ? "#ffd166" : "#75d7ff";
+    ctx.strokeStyle = isMazeCheckpointFloor(modeState.floor || 1) ? "#ffd166" : "#75d7ff";
     ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.arc(modeState.portal.x, modeState.portal.y, 24 * pulse, 0, Math.PI * 2);
@@ -3528,7 +3574,7 @@ function drawModeChoiceOverlay() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont("800 42px system-ui, sans-serif");
-  ctx.fillText("Floor 5 Portal", WIDTH / 2, HEIGHT / 2 - 108);
+  ctx.fillText(`Floor ${modeState.floor || 1} Checkpoint`, WIDTH / 2, HEIGHT / 2 - 108);
   ctx.fillStyle = "#cbd5df";
   setCanvasFont("700 18px system-ui, sans-serif");
   ctx.fillText(`Bank ${modeState.runPoints || 0} run points now, or continue to harder floors for better rewards.`, WIDTH / 2, HEIGHT / 2 - 62);
@@ -3750,11 +3796,12 @@ function getModeHudTitle() {
 function getModeObjectiveText() {
   if (currentGameMode === GAME_MODE.ARMY_VS) return "Defeat the opposing player";
   if (currentGameMode === GAME_MODE.MAZE) {
-    if (isBossGateActive() && modeState.floor === 5) return "Defeat the boss to open the floor 5 portal";
-    if (isBossGateActive() && modeState.floor === 10) return "Defeat the boss to open the final portal";
-    if (modeState.choicePending) return "Floor 5 portal: choose Exit or Continue";
-    if ((modeState.floor || 1) >= 10) return "Find the final portal to extract";
-    return `Find the portal to floor ${(modeState.floor || 1) + 1}`;
+    const floor = modeState.floor || 1;
+    if (isBossGateActive() && isMazeCheckpointFloor(floor)) return `Defeat the boss to open floor ${floor} checkpoint`;
+    if (modeState.choicePending) return `Floor ${floor} checkpoint: choose Exit or Continue`;
+    return isMazeCheckpointFloor(floor)
+      ? `Find the checkpoint portal on floor ${floor}`
+      : `Find the portal to floor ${floor + 1}`;
   }
   if (currentGameMode === GAME_MODE.DUNGEON) {
     if (isBossGateActive() && !modeState.hasRelic) return "Defeat the boss guarding the relic";
@@ -4030,12 +4077,19 @@ function drawMenu() {
   }
 
   menuButton = drawButton(WIDTH / 2 - 330, 506, 200, 56, "Single Player");
-  hostButton = drawButton(WIDTH / 2 - 100, 506, 200, 56, "Host Co-op");
-  joinButton = drawButton(WIDTH / 2 + 130, 506, 200, 56, "Join Co-op");
+  hostButton = drawButton(WIDTH / 2 - 100, 506, 200, 56, "Host LAN", !runtimeCapabilities.nativeLanAvailable);
+  joinButton = drawButton(WIDTH / 2 + 130, 506, 200, 56, "Join LAN", !runtimeCapabilities.nativeLanAvailable);
   shopButton = drawButton(WIDTH / 2 - 330, 580, 200, 54, "Shop");
   equipmentButton = drawButton(WIDTH / 2 - 100, 580, 200, 54, "Equipment");
   recordsButton = drawButton(WIDTH / 2 + 130, 580, 200, 54, "Records");
-  armyVsButton = drawButton(WIDTH / 2 - 150, 654, 300, 54, "Host Army VS");
+  armyVsButton = drawButton(WIDTH / 2 - 330, 654, 300, 54, "Host Army VS", !runtimeCapabilities.nativeLanAvailable);
+  onlineButton = drawButton(WIDTH / 2 + 30, 654, 300, 54, "Online Multiplayer");
+  ctx.fillStyle = "#9aa7b4";
+  setCanvasFont("600 13px system-ui, sans-serif");
+  const platformLine = runtimeCapabilities.nativeLanAvailable
+    ? "APK runtime: native LAN and browser online options are available."
+    : "Browser/PWA runtime: use Online Multiplayer for room-based play.";
+  ctx.fillText(platformLine, WIDTH / 2, 738);
   ctx.textAlign = "left";
 }
 
@@ -4196,6 +4250,69 @@ function drawShop() {
   drawMagicShop(WIDTH / 2 - 432, 748);
 
   shopBackButton = drawButton(WIDTH - 250, 126, 190, 50, "Back");
+  ctx.textAlign = "left";
+}
+
+function drawOnlineLobby() {
+  drawArenaPreview();
+  ctx.fillStyle = "rgba(12, 14, 18, 0.82)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  onlineLobbyButtons = {};
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont("800 50px system-ui, sans-serif");
+  ctx.fillText("Online Multiplayer", WIDTH / 2, 158);
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont("700 17px system-ui, sans-serif");
+  ctx.fillText(runtimeCapabilities.nativeWrapper ? "Optional online relay; native LAN co-op is still available." : "Browser/PWA rooms use an outbound relay server.", WIDTH / 2, 200);
+  ctx.fillStyle = getConfiguredOnlineServerUrl() ? "#75d7ff" : "#ffd166";
+  setCanvasFont("700 16px system-ui, sans-serif");
+  ctx.fillText(`Server: ${truncateText(getOnlineServerLabel(), 74)}`, WIDTH / 2, 232);
+
+  ctx.fillStyle = runtimeCapabilities.onlineNow ? "#8de85c" : "#ef476f";
+  ctx.fillText(runtimeCapabilities.onlineNow ? "Browser online" : "Browser offline", WIDTH / 2 - 180, 264);
+  ctx.fillStyle = runtimeCapabilities.websocketAvailable ? "#8de85c" : "#ef476f";
+  ctx.fillText(runtimeCapabilities.websocketAvailable ? "WebSocket ready" : "WebSocket unavailable", WIDTH / 2 + 180, 264);
+
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(WIDTH / 2 - 300, 292, 600, 250);
+  ctx.strokeStyle = "#5d6e7e";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(WIDTH / 2 - 300, 292, 600, 250);
+
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont("800 22px system-ui, sans-serif");
+  ctx.fillText(`Mode: ${getGameModeDefinition(getSelectedPlayableMode()).label}`, WIDTH / 2, 332);
+  ctx.fillStyle = "#ffd166";
+  setCanvasFont("800 18px system-ui, sans-serif");
+  ctx.fillText(onlineRoomCode ? `Room ${onlineRoomCode}` : "No room yet", WIDTH / 2, 368);
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont("700 16px system-ui, sans-serif");
+  ctx.fillText(truncateText(onlineStatus, 78), WIDTH / 2, 402);
+
+  if (lobbyPlayers.length > 0) {
+    setCanvasFont("700 16px system-ui, sans-serif");
+    for (let i = 0; i < Math.min(lobbyPlayers.length, 4); i += 1) {
+      ctx.fillStyle = PLAYER_COLORS[i % PLAYER_COLORS.length];
+      ctx.fillText(`${lobbyPlayers[i].id.toUpperCase()}  ${lobbyPlayers[i].name}`, WIDTH / 2, 436 + i * 24);
+    }
+  } else {
+    ctx.fillStyle = "#9aa7b4";
+    setCanvasFont("700 16px system-ui, sans-serif");
+    ctx.fillText("Create a room or join by code.", WIDTH / 2, 446);
+  }
+
+  const unavailable = !getConfiguredOnlineServerUrl() || !runtimeCapabilities.websocketAvailable;
+  onlineLobbyButtons.create = drawButton(WIDTH / 2 - 330, 584, 200, 56, "Create Room", unavailable);
+  onlineLobbyButtons.join = drawButton(WIDTH / 2 - 100, 584, 200, 56, "Join Room", unavailable);
+  onlineLobbyButtons.code = drawButton(WIDTH / 2 + 130, 584, 200, 56, onlineRoomCode ? "Edit Code" : "Room Code");
+  onlineLobbyButtons.start = drawButton(WIDTH / 2 - 220, 678, 200, 56, "Start Game", sessionMode !== SESSION.HOST || !onlineRoomCode);
+  onlineLobbyButtons.back = drawButton(WIDTH / 2 + 20, 678, 200, 56, "Back");
+
+  ctx.fillStyle = "#9aa7b4";
+  setCanvasFont("600 14px system-ui, sans-serif");
+  ctx.fillText("This first version relays host-authoritative snapshots. The relay does not simulate gameplay yet.", WIDTH / 2, 770);
   ctx.textAlign = "left";
 }
 
@@ -4715,18 +4832,27 @@ function handleCanvasClick() {
 
     if (menuButton && pointInRect(mouse.x, mouse.y, menuButton.x, menuButton.y, menuButton.width, menuButton.height)) {
       mouse.down = false;
+      requestAppLikeDisplay();
       startGame();
       return;
     }
 
     if (hostButton && pointInRect(mouse.x, mouse.y, hostButton.x, hostButton.y, hostButton.width, hostButton.height)) {
       mouse.down = false;
+      if (!runtimeCapabilities.nativeLanAvailable) {
+        networkStatus = "Native LAN hosting is available only inside the Android APK.";
+        return;
+      }
       openHostLobby(getSelectedPlayableMode());
       return;
     }
 
     if (joinButton && pointInRect(mouse.x, mouse.y, joinButton.x, joinButton.y, joinButton.width, joinButton.height)) {
       mouse.down = false;
+      if (!runtimeCapabilities.nativeLanAvailable) {
+        networkStatus = "Native LAN joining is available only inside the Android APK.";
+        return;
+      }
       openJoinLobby();
       return;
     }
@@ -4751,7 +4877,17 @@ function handleCanvasClick() {
 
     if (armyVsButton && pointInRect(mouse.x, mouse.y, armyVsButton.x, armyVsButton.y, armyVsButton.width, armyVsButton.height)) {
       mouse.down = false;
+      if (!runtimeCapabilities.nativeLanAvailable) {
+        networkStatus = "Army VS currently uses native LAN and is available in the Android APK.";
+        return;
+      }
       openArmyVsLobby();
+      return;
+    }
+
+    if (onlineButton && pointInRect(mouse.x, mouse.y, onlineButton.x, onlineButton.y, onlineButton.width, onlineButton.height)) {
+      mouse.down = false;
+      openOnlineLobby();
       return;
     }
   }
@@ -4798,6 +4934,34 @@ function handleCanvasClick() {
       return;
     }
     if (joinLobbyButtons.back && pointInRect(mouse.x, mouse.y, joinLobbyButtons.back.x, joinLobbyButtons.back.y, joinLobbyButtons.back.width, joinLobbyButtons.back.height)) {
+      mouse.down = false;
+      leaveLobbyToMenu();
+      return;
+    }
+  }
+
+  if (gameState === STATE.ONLINE_LOBBY) {
+    if (onlineLobbyButtons.create && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.create.x, onlineLobbyButtons.create.y, onlineLobbyButtons.create.width, onlineLobbyButtons.create.height)) {
+      mouse.down = false;
+      createOnlineRoom();
+      return;
+    }
+    if (onlineLobbyButtons.join && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.join.x, onlineLobbyButtons.join.y, onlineLobbyButtons.join.width, onlineLobbyButtons.join.height)) {
+      mouse.down = false;
+      joinOnlineRoom();
+      return;
+    }
+    if (onlineLobbyButtons.code && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.code.x, onlineLobbyButtons.code.y, onlineLobbyButtons.code.width, onlineLobbyButtons.code.height)) {
+      mouse.down = false;
+      promptForOnlineRoomCode();
+      return;
+    }
+    if (onlineLobbyButtons.start && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.start.x, onlineLobbyButtons.start.y, onlineLobbyButtons.start.width, onlineLobbyButtons.start.height)) {
+      mouse.down = false;
+      startHostCoopGame();
+      return;
+    }
+    if (onlineLobbyButtons.back && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.back.x, onlineLobbyButtons.back.y, onlineLobbyButtons.back.width, onlineLobbyButtons.back.height)) {
       mouse.down = false;
       leaveLobbyToMenu();
       return;
@@ -5302,6 +5466,224 @@ function getNativeLocalNetworkPlugin() {
   return null;
 }
 
+function normalizeAppConfig(config = {}) {
+  return {
+    environment: String(config.environment || "development"),
+    protocolVersion: Math.max(1, Math.round(Number(config.protocolVersion) || 1)),
+    onlineServerUrl: String(config.onlineServerUrl || "").trim(),
+    localDevelopmentServerUrl: String(config.localDevelopmentServerUrl || "ws://127.0.0.1:8787").trim(),
+    useLocalDevelopmentServerWhenEmpty: config.useLocalDevelopmentServerWhenEmpty !== false
+  };
+}
+
+function detectRuntimeCapabilities() {
+  const capacitor = window.Capacitor;
+  const nativePlatform = Boolean(capacitor?.isNativePlatform?.() || capacitor?.getPlatform?.() === "android");
+  const standalonePwa = Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone);
+  return {
+    nativeWrapper: nativePlatform,
+    browser: !nativePlatform,
+    standalonePwa,
+    nativeLanAvailable: Boolean(NativeLocalNetwork),
+    onlineServerConfigured: Boolean(getConfiguredOnlineServerUrl()),
+    serviceWorkerAvailable: "serviceWorker" in navigator,
+    onlineNow: navigator.onLine !== false,
+    fullscreenAvailable: Boolean(document.documentElement.requestFullscreen),
+    orientationLockAvailable: Boolean(screen.orientation?.lock),
+    websocketAvailable: "WebSocket" in window
+  };
+}
+
+function getConfiguredOnlineServerUrl() {
+  if (APP_CONFIG.onlineServerUrl) return APP_CONFIG.onlineServerUrl;
+  if (APP_CONFIG.useLocalDevelopmentServerWhenEmpty && APP_CONFIG.localDevelopmentServerUrl) {
+    return APP_CONFIG.localDevelopmentServerUrl;
+  }
+  return "";
+}
+
+function getOnlineServerLabel() {
+  if (APP_CONFIG.onlineServerUrl) return APP_CONFIG.onlineServerUrl;
+  if (APP_CONFIG.useLocalDevelopmentServerWhenEmpty && APP_CONFIG.localDevelopmentServerUrl) {
+    return `${APP_CONFIG.localDevelopmentServerUrl} (local dev fallback)`;
+  }
+  return "Not configured";
+}
+
+function requestAppLikeDisplay() {
+  if (runtimeCapabilities.nativeWrapper) return;
+  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  document.documentElement.requestFullscreen().catch(() => {});
+  if (screen.orientation?.lock) {
+    screen.orientation.lock("landscape").catch(() => {});
+  }
+}
+
+function createNativeLanTransport() {
+  return {
+    id: "nativeLan",
+    label: "Native Android LAN",
+    canHost: () => Boolean(NativeLocalNetwork),
+    canJoin: () => Boolean(NativeLocalNetwork),
+    send(message, clientId) {
+      if (!NativeLocalNetwork) return;
+      NativeLocalNetwork.send({ clientId, message: JSON.stringify(message) }).catch((error) => {
+        networkStatus = `Send failed: ${getErrorMessage(error)}`;
+      });
+    },
+    disconnectClient(clientId) {
+      if (!NativeLocalNetwork || typeof NativeLocalNetwork.disconnectClient !== "function") return;
+      NativeLocalNetwork.disconnectClient({ clientId }).catch(() => {});
+    },
+    stop(notifyClients) {
+      if (!NativeLocalNetwork) return;
+      if (sessionMode === SESSION.HOST) {
+        stopDiscoveryBroadcast();
+        if (notifyClients) {
+          this.send({ type: "hostEnded" });
+          window.setTimeout(() => {
+            NativeLocalNetwork.stopHost().catch(() => {});
+          }, 120);
+          return;
+        }
+        NativeLocalNetwork.stopHost().catch(() => {});
+      } else if (sessionMode === SESSION.CLIENT) {
+        stopDiscoverySearch();
+        this.send({ type: "leave" });
+        NativeLocalNetwork.disconnect().catch(() => {});
+      }
+    }
+  };
+}
+
+function createOnlineServerTransport() {
+  return {
+    id: "onlineServer",
+    label: "Online Relay",
+    socket: null,
+    roomCode: "",
+    clientId: "",
+    role: "",
+    connected: false,
+    canHost: () => Boolean(getConfiguredOnlineServerUrl() && runtimeCapabilities.websocketAvailable),
+    canJoin: () => Boolean(getConfiguredOnlineServerUrl() && runtimeCapabilities.websocketAvailable),
+    connect() {
+      const url = getConfiguredOnlineServerUrl();
+      if (!url) {
+        onlineStatus = "Online server URL is not configured.";
+        return Promise.reject(new Error("Online server URL is not configured"));
+      }
+      if (!runtimeCapabilities.websocketAvailable) {
+        onlineStatus = "This browser does not support WebSocket multiplayer.";
+        return Promise.reject(new Error("WebSocket unavailable"));
+      }
+      this.closeSocket();
+      return new Promise((resolve, reject) => {
+        const socket = new WebSocket(url);
+        this.socket = socket;
+        socket.addEventListener("open", () => {
+          this.connected = true;
+          onlineStatus = "Connected to relay.";
+          resolve();
+        }, { once: true });
+        socket.addEventListener("message", (event) => this.handleServerMessage(event));
+        socket.addEventListener("close", () => {
+          this.connected = false;
+          if (sessionMode !== SESSION.SINGLE) {
+            onlineStatus = "Online relay disconnected.";
+          }
+        });
+        socket.addEventListener("error", () => {
+          onlineStatus = "Online relay unavailable.";
+          reject(new Error("Online relay unavailable"));
+        }, { once: true });
+      });
+    },
+    createRoom() {
+      return this.connect().then(() => {
+        this.role = "host";
+        this.sendRaw({
+          type: "createRoom",
+          protocolVersion: APP_CONFIG.protocolVersion,
+          name: "Blade Box Arena Host",
+          mode: selectedGameMode
+        });
+      });
+    },
+    joinRoom(roomCode) {
+      const code = String(roomCode || "").trim().toUpperCase();
+      if (!code) {
+        onlineStatus = "Enter a room code first.";
+        return Promise.resolve();
+      }
+      return this.connect().then(() => {
+        this.role = "client";
+        this.sendRaw({
+          type: "joinRoom",
+          protocolVersion: APP_CONFIG.protocolVersion,
+          roomCode: code,
+          name: "Player",
+          hello: {
+            type: "hello",
+            name: "Player",
+            swordTier: permanent.swordTier,
+            weaponId: permanent.weaponId,
+            magicIds: permanent.equippedMagicIds
+          }
+        });
+      });
+    },
+    send(message, clientId) {
+      if (!this.connected) return;
+      const payload = {
+        type: "relay",
+        roomCode: this.roomCode,
+        targetClientId: clientId || null,
+        message
+      };
+      this.sendRaw(payload);
+    },
+    sendRaw(message) {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+      this.socket.send(JSON.stringify(message));
+    },
+    disconnectClient(clientId) {
+      this.sendRaw({ type: "disconnectPeer", roomCode: this.roomCode, targetClientId: clientId });
+    },
+    stop(notifyClients) {
+      if (notifyClients && this.connected && sessionMode === SESSION.HOST) {
+        this.send({ type: "hostEnded" });
+      } else if (this.connected && sessionMode === SESSION.CLIENT) {
+        this.send({ type: "leave" });
+      }
+      this.closeSocket();
+    },
+    closeSocket() {
+      if (this.socket) {
+        this.socket.close();
+      }
+      this.socket = null;
+      this.connected = false;
+      this.roomCode = "";
+      this.clientId = "";
+      this.role = "";
+    },
+    handleServerMessage(event) {
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        return;
+      }
+      handleOnlineServerMessage(message);
+    }
+  };
+}
+
+function getActiveNetworkTransport() {
+  return activeNetworkTransport || nativeLanTransport;
+}
+
 function loadPermanentProgress() {
   try {
     const parsed = JSON.parse(localStorage.getItem("bladeBoxArena.permanent") || "{}");
@@ -5475,6 +5857,7 @@ async function openHostLobby(modeId = selectedGameMode) {
   mouse.down = false;
   selectedGameMode = getGameModeDefinition(modeId).id;
   sessionMode = SESSION.HOST;
+  activeNetworkTransport = nativeLanTransport;
   localPlayerId = "p1";
   player = undefined;
   players = [];
@@ -5515,6 +5898,71 @@ function openJoinLobby() {
   gameState = STATE.JOIN_LOBBY;
   networkStatus = NativeLocalNetwork ? "Searching local WiFi. Manual IP still works." : "Android APK required to join local WiFi co-op";
   startDiscoverySearch();
+}
+
+function openOnlineLobby() {
+  resetMobileControls();
+  mouse.down = false;
+  requestAppLikeDisplay();
+  stopDiscoveryBroadcast();
+  stopDiscoverySearch();
+  sessionMode = SESSION.SINGLE;
+  activeNetworkTransport = onlineServerTransport;
+  player = undefined;
+  players = [];
+  lobbyPlayers = [];
+  pendingClientIds.clear();
+  remoteInputs.clear();
+  clientIdToPlayerId.clear();
+  gameState = STATE.ONLINE_LOBBY;
+  onlineStatus = getConfiguredOnlineServerUrl()
+    ? `Ready for online rooms via ${getOnlineServerLabel()}.`
+    : "Online server URL is not configured.";
+}
+
+function promptForOnlineRoomCode() {
+  const entered = window.prompt("Enter online room code", onlineRoomCode || "");
+  if (entered === null) return;
+  onlineRoomCode = entered.trim().toUpperCase();
+  onlineStatus = onlineRoomCode ? `Room code set to ${onlineRoomCode}` : "Room code cleared.";
+}
+
+async function createOnlineRoom() {
+  activeNetworkTransport = onlineServerTransport;
+  sessionMode = SESSION.HOST;
+  localPlayerId = "p1";
+  selectedGameMode = getSelectedPlayableMode();
+  lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier, weaponId: permanent.weaponId, magicIds: permanent.equippedMagicIds, team: null }];
+  pendingClientIds.clear();
+  remoteInputs.clear();
+  clientIdToPlayerId.clear();
+  onlineStatus = "Connecting to online relay...";
+  try {
+    await onlineServerTransport.createRoom();
+  } catch (error) {
+    onlineStatus = `Create room failed: ${getErrorMessage(error)}`;
+    sessionMode = SESSION.SINGLE;
+  }
+}
+
+async function joinOnlineRoom() {
+  if (!onlineRoomCode) {
+    promptForOnlineRoomCode();
+    if (!onlineRoomCode) return;
+  }
+  activeNetworkTransport = onlineServerTransport;
+  sessionMode = SESSION.CLIENT;
+  activeNetworkTransport = nativeLanTransport;
+  localPlayerId = "p2";
+  lobbyPlayers = [];
+  players = [];
+  onlineStatus = `Connecting to room ${onlineRoomCode}...`;
+  try {
+    await onlineServerTransport.joinRoom(onlineRoomCode);
+  } catch (error) {
+    onlineStatus = `Join room failed: ${getErrorMessage(error)}`;
+    sessionMode = SESSION.SINGLE;
+  }
 }
 
 function promptForJoinAddress() {
@@ -5572,6 +6020,7 @@ function leaveLobbyToMenu() {
   resetMobileControls();
   mouse.down = false;
   sessionMode = SESSION.SINGLE;
+  activeNetworkTransport = null;
   selectedGameMode = getSelectedPlayableMode();
   gameState = STATE.MENU;
   lobbyPlayers = [];
@@ -5579,12 +6028,22 @@ function leaveLobbyToMenu() {
   remoteInputs.clear();
   clientIdToPlayerId.clear();
   networkStatus = NativeLocalNetwork ? "Ready" : "Android APK required for local WiFi co-op";
+  onlineStatus = "Online rooms use a configurable relay server.";
 }
 
 function startHostCoopGame() {
   if (sessionMode !== SESSION.HOST) return;
-  if (!NativeLocalNetwork) {
-    networkStatus = "Android APK required to host local WiFi co-op";
+  const transport = getActiveNetworkTransport();
+  if (transport.id === "onlineServer" && (!onlineServerTransport.connected || !onlineRoomCode)) {
+    networkStatus = "Create an online room before starting.";
+    onlineStatus = networkStatus;
+    return;
+  }
+  if (!transport.canHost()) {
+    networkStatus = transport.id === "onlineServer"
+      ? "Online relay is not connected or configured."
+      : "Android APK required to host local WiFi co-op";
+    onlineStatus = networkStatus;
     return;
   }
   if (selectedGameMode === GAME_MODE.ARMY_VS && lobbyPlayers.length < 2) {
@@ -5645,6 +6104,58 @@ function handleNativeNetworkMessage(event) {
     handleHostNetworkMessage(event.clientId, message);
   } else if (sessionMode === SESSION.CLIENT) {
     handleClientNetworkMessage(message);
+  }
+}
+
+function handleOnlineServerMessage(message) {
+  if (message.type === "roomCreated") {
+    onlineServerTransport.roomCode = message.roomCode || "";
+    onlineServerTransport.clientId = message.clientId || "host";
+    onlineRoomCode = onlineServerTransport.roomCode;
+    hostIpAddress = onlineRoomCode || "Online";
+    onlineStatus = `Room ${onlineRoomCode} created. Share the code with browser players.`;
+    networkStatus = onlineStatus;
+    broadcastLobbyState();
+    return;
+  }
+
+  if (message.type === "roomJoined") {
+    onlineServerTransport.roomCode = message.roomCode || onlineRoomCode;
+    onlineServerTransport.clientId = message.clientId || "";
+    onlineRoomCode = onlineServerTransport.roomCode;
+    onlineStatus = `Joined room ${onlineRoomCode}. Waiting for host.`;
+    networkStatus = onlineStatus;
+    return;
+  }
+
+  if (message.type === "relay") {
+    networkDebug.bytesIn += JSON.stringify(message.message || {}).length;
+    if (sessionMode === SESSION.HOST) {
+      handleHostNetworkMessage(message.clientId, message.message || {});
+    } else if (sessionMode === SESSION.CLIENT) {
+      handleClientNetworkMessage(message.message || {});
+    }
+    return;
+  }
+
+  if (message.type === "peerDisconnected") {
+    if (sessionMode === SESSION.HOST) {
+      removeLobbyClient(message.clientId);
+      onlineStatus = `Client ${message.clientId} disconnected.`;
+      networkStatus = onlineStatus;
+      broadcastLobbyState();
+    } else {
+      onlineStatus = "Host disconnected.";
+      networkStatus = onlineStatus;
+      stopNetworkSession(false);
+      returnToMenu();
+    }
+    return;
+  }
+
+  if (message.type === "error") {
+    onlineStatus = message.reason || "Online relay error.";
+    networkStatus = onlineStatus;
   }
 }
 
@@ -6151,18 +6662,14 @@ function applyRewardDelta(message) {
 }
 
 function sendNetworkMessage(message, clientId) {
-  if (!NativeLocalNetwork) return;
+  const transport = getActiveNetworkTransport();
+  if (!transport) return;
   const serialized = JSON.stringify(message);
   networkDebug.bytesOut += serialized.length;
   if (message.type === "snapshot") {
     networkDebug.snapshotsOut += 1;
   }
-  NativeLocalNetwork.send({
-    clientId,
-    message: serialized
-  }).catch((error) => {
-    networkStatus = `Send failed: ${getErrorMessage(error)}`;
-  });
+  transport.send(message, clientId);
 }
 
 function broadcastNetworkMessage(message) {
@@ -6170,27 +6677,12 @@ function broadcastNetworkMessage(message) {
 }
 
 function disconnectClient(clientId) {
-  if (!NativeLocalNetwork || typeof NativeLocalNetwork.disconnectClient !== "function") return;
-  NativeLocalNetwork.disconnectClient({ clientId }).catch(() => {});
+  getActiveNetworkTransport().disconnectClient(clientId);
 }
 
 function stopNetworkSession(notifyClients) {
-  if (!NativeLocalNetwork) return;
-  if (sessionMode === SESSION.HOST) {
-    stopDiscoveryBroadcast();
-    if (notifyClients) {
-      broadcastNetworkMessage({ type: "hostEnded" });
-      window.setTimeout(() => {
-        NativeLocalNetwork.stopHost().catch(() => {});
-      }, 120);
-      return;
-    }
-    NativeLocalNetwork.stopHost().catch(() => {});
-  } else if (sessionMode === SESSION.CLIENT) {
-    stopDiscoverySearch();
-    sendNetworkMessage({ type: "leave" });
-    NativeLocalNetwork.disconnect().catch(() => {});
-  }
+  getActiveNetworkTransport().stop(notifyClients);
+  activeNetworkTransport = null;
 }
 
 function getErrorMessage(error) {
@@ -6272,6 +6764,19 @@ canvas.addEventListener("lostpointercapture", handleLostPointerCapture);
 window.addEventListener("mouseup", () => {
   mouse.down = false;
   activeOptionsSlider = null;
+});
+window.addEventListener("load", () => {
+  if (resizeCanvasToDisplaySize(true)) {
+    resetMobileControls();
+  }
+});
+window.addEventListener("online", () => {
+  runtimeCapabilities.onlineNow = true;
+  if (gameState === STATE.ONLINE_LOBBY) onlineStatus = "Browser connection restored.";
+});
+window.addEventListener("offline", () => {
+  runtimeCapabilities.onlineNow = false;
+  if (gameState === STATE.ONLINE_LOBBY) onlineStatus = "Browser is offline. Online rooms are unavailable.";
 });
 window.addEventListener("resize", () => {
   if (resizeCanvasToDisplaySize()) {

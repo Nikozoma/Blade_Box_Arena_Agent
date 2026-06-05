@@ -5,6 +5,9 @@
   "description": "Top-down roguelite arena prototype packaged for browser and Android.",
   "scripts": {
     "serve": "node scripts/dev-server.js",
+    "preview:pwa": "node scripts/dev-server.js",
+    "multiplayer:relay": "node server/relay-server.js",
+    "multiplayer:smoke": "node scripts/relay-smoke.js",
     "build:web": "node scripts/sync-web.js",
     "cap:sync": "npm run build:web && cap sync android",
     "android:open": "npm run cap:sync && cap open android",
@@ -12,7 +15,8 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.3.3",
-    "@capacitor/core": "^8.3.3"
+    "@capacitor/core": "^8.3.3",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.3"

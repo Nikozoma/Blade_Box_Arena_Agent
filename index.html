@@ -2,17 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
-    />
-    <title>Blade Box Arena</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#080b10">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="BladeBox Agent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="application-name" content="Blade Box Arena: Agent">
+    <title>Blade Box Arena: Agent</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
-      <canvas id="gameCanvas" width="1280" height="900" aria-label="Blade Box Arena game canvas"></canvas>
+      <canvas id="gameCanvas" aria-label="Blade Box Arena game canvas"></canvas>
     </main>
+    <script src="src/config.js"></script>
+    <script src="src/pwa.js"></script>
     <script src="src/game.js"></script>
   </body>
 </html>
