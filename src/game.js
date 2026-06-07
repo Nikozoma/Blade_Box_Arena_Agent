@@ -259,6 +259,19 @@ const DISCOVERY_PORT = 7778;
 const MAX_COOP_PLAYERS = 4;
 const SNAPSHOT_RATE_OPTIONS = [45, 60];
 const DEFAULT_HOST_SNAPSHOT_RATE = 45;
+const ONLINE_TICK_RATE_OPTIONS = [50, 60, 70, 80, 90, 100];
+const DEFAULT_ONLINE_TICK_RATE = 70;
+const ONLINE_CHAT_MAX_MESSAGES = 40;
+const ONLINE_CHAT_MAX_LENGTH = 140;
+const IPHONE_FULLSCREEN_HINT = "For app-style fullscreen on iPhone, add the game to your Home Screen from Safari.";
+const TUTORIAL_KEYS = {
+  BASIC: "basicControls",
+  MAGIC: "magicControls",
+  ARENA: "modeArena",
+  MAZE: "modeMaze",
+  DUNGEON: "modeDungeon",
+  ARMY_VS: "modeArmyVs"
+};
 const INPUT_SEND_INTERVAL = 1 / 30;
 const REMOTE_ENTITY_SMOOTHING = 18;
 const LOCAL_CORRECTION_THRESHOLD = 52;
@@ -540,6 +553,9 @@ let magicButtons = [];
 let optionsButtons = [];
 let optionsSliders = [];
 let activeOptionsSlider = null;
+let tutorialPopup = null;
+let tutorialQueue = [];
+let tutorialButtons = {};
 let hostLobbyButtons = {};
 let joinLobbyButtons = {};
 let onlineLobbyButtons = {};
@@ -558,6 +574,18 @@ let joinHostAddress = loadLastHostAddress();
 let joinPort = NETWORK_PORT;
 let onlineStatus = "Online rooms use a configurable relay server.";
 let onlineRoomCode = "";
+let onlineTickRate = DEFAULT_ONLINE_TICK_RATE;
+let onlineRoomName = "";
+let onlineConnectionOptionsOpen = false;
+let onlineFullscreenHint = "";
+let onlineLobbyState = {
+  roomCode: "",
+  mode: GAME_MODE.ARENA,
+  roomName: "",
+  tickRate: DEFAULT_ONLINE_TICK_RATE,
+  players: [],
+  chat: []
+};
 let activeNetworkTransport = null;
 let discoveredLobbies = [];
 let snapshotTimer = 0;
@@ -644,8 +672,11 @@ function createJoystickState() {
 }
 
 function resizeCanvasToDisplaySize(force = false) {
-  const displayWidth = Math.max(320, Math.round(window.innerWidth || document.documentElement.clientWidth || DESIGN_WIDTH));
-  const displayHeight = Math.max(240, Math.round(window.innerHeight || document.documentElement.clientHeight || DESIGN_HEIGHT));
+  const viewport = window.visualViewport;
+  const rawWidth = viewport?.width || window.innerWidth || document.documentElement.clientWidth || DESIGN_WIDTH;
+  const rawHeight = viewport?.height || window.innerHeight || document.documentElement.clientHeight || DESIGN_HEIGHT;
+  const displayWidth = Math.max(320, Math.round(rawWidth));
+  const displayHeight = Math.max(240, Math.round(rawHeight));
   const aspect = displayWidth / displayHeight;
   const designAspect = DESIGN_WIDTH / DESIGN_HEIGHT;
   const nextScale = aspect >= designAspect ? displayHeight / DESIGN_HEIGHT : displayWidth / DESIGN_WIDTH;
@@ -691,6 +722,7 @@ function startGame() {
   beginRunStats();
   gameState = STATE.PLAYING;
   startModeCombat();
+  queueGameplayTutorialsForCurrentMode();
 }
 
 function resetRunState() {
@@ -740,6 +772,9 @@ function returnToMenu() {
   activeCoopLevelOfferId = null;
   modeChoiceButtons = [];
   optionsButtons = [];
+  tutorialPopup = null;
+  tutorialQueue = [];
+  tutorialButtons = {};
   lobbyPlayers = [];
   pendingClientIds.clear();
   remoteInputs.clear();
@@ -3080,6 +3115,7 @@ function draw() {
   if (gameState === STATE.OPTIONS && previousGameState === STATE.MENU) {
     drawMenu();
     drawOptionsMenu();
+    drawTutorialPopup();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3123,6 +3159,7 @@ function draw() {
   if (gameState === STATE.OPTIONS && (!player || previousGameState !== STATE.PLAYING)) {
     drawMenu();
     drawOptionsMenu();
+    drawTutorialPopup();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3168,6 +3205,7 @@ function draw() {
     drawMagicButtons();
     drawMobileControls();
   }
+  drawTutorialPopup();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -3893,7 +3931,7 @@ function drawOptionsMenu() {
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
   const panelWidth = 520;
-  const panelHeight = 500;
+  const panelHeight = 580;
   const x = WIDTH / 2 - panelWidth / 2;
   const y = HEIGHT / 2 - panelHeight / 2;
   ctx.fillStyle = "#202832";
@@ -3916,10 +3954,11 @@ function drawOptionsMenu() {
   ctx.fillText("Font Scale", WIDTH / 2, y + 220);
   drawOptionSlider("fontScale", WIDTH / 2 - 190, y + 250, 380, 34, settings.fontScale, 1, 2, true, `${Math.round(settings.fontScale * 100)}%`);
 
+  drawOptionButton(WIDTH / 2 - 170, y + 336, 340, 54, "Help / Tutorials", false, openTutorialHelpMenu);
   const closeLabel = previousGameState === STATE.MENU ? "Back to Menu" : "Resume";
-  drawOptionButton(WIDTH / 2 - 170, y + 340, 340, 54, closeLabel, false, closeOptionsMenu);
+  drawOptionButton(WIDTH / 2 - 170, y + 406, 340, 54, closeLabel, false, closeOptionsMenu);
   if (previousGameState === STATE.PLAYING) {
-    drawOptionButton(WIDTH / 2 - 170, y + 412, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
+    drawOptionButton(WIDTH / 2 - 170, y + 476, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
   }
   ctx.restore();
 }
@@ -3978,6 +4017,309 @@ function drawOptionButton(x, y, width, height, label, selected, action) {
   ctx.fillText(label, x + width / 2, y + height / 2);
   ctx.textBaseline = "alphabetic";
   optionsButtons.push({ x, y, width, height, action });
+}
+
+function getTutorialDefinitions() {
+  return {
+    [TUTORIAL_KEYS.ARENA]: {
+      key: TUTORIAL_KEYS.ARENA,
+      title: "Arena",
+      subtitle: "Standard survival mode",
+      pages: [{
+        bullets: [
+          "Defeat increasingly difficult enemy waves.",
+          "Clear each wave to advance.",
+          "A boss appears every 5 waves.",
+          "Survive as long as possible while earning XP, upgrades, pickups, and kill points."
+        ]
+      }]
+    },
+    [TUTORIAL_KEYS.MAZE]: {
+      key: TUTORIAL_KEYS.MAZE,
+      title: "Maze",
+      subtitle: "Exploration and extraction mode",
+      pages: [{
+        bullets: [
+          "Explore generated maze floors.",
+          "Find the portal to advance.",
+          "Enemies continue spawning while you search.",
+          "Every 5 floors, defeat a boss to reach a checkpoint."
+        ],
+        sections: [
+          "Exit & Bank - leave safely with your accumulated run points.",
+          "Continue - enter harder floors for greater rewards."
+        ],
+        warning: "If you die before banking your points, your unbanked run points are lost."
+      }]
+    },
+    [TUTORIAL_KEYS.DUNGEON]: {
+      key: TUTORIAL_KEYS.DUNGEON,
+      title: "Dungeon",
+      subtitle: "Objective-based extraction mode",
+      pages: [{
+        bullets: [
+          "Explore the dungeon and find the relic.",
+          "Defeat the boss guarding it.",
+          "Collect the relic and return to the exit.",
+          "Enemies continue spawning while you explore."
+        ],
+        warning: "Escape with the relic to bank your run points."
+      }]
+    },
+    [TUTORIAL_KEYS.ARMY_VS]: {
+      key: TUTORIAL_KEYS.ARMY_VS,
+      title: "Army VS",
+      subtitle: "Multiplayer battle mode",
+      pages: [{
+        bullets: [
+          "Two players fight as opposing armies: Red Army and Blue Army.",
+          "Each player has allied computer-controlled fighters.",
+          "Reinforcements arrive periodically.",
+          "Armies grow stronger as the battle continues.",
+          "Defeat the opposing player to win."
+        ]
+      }]
+    },
+    [TUTORIAL_KEYS.BASIC]: {
+      key: TUTORIAL_KEYS.BASIC,
+      title: "Basic Controls",
+      subtitle: "Use both thumbs at the same time: left thumb to move, right thumb to aim and attack.",
+      pages: [{
+        bullets: [
+          "Drag on the left side to move.",
+          "Drag on the right side to aim and attack.",
+          "You can move and attack in different directions.",
+          "Release either side to stop that action."
+        ]
+      }]
+    },
+    [TUTORIAL_KEYS.MAGIC]: {
+      key: TUTORIAL_KEYS.MAGIC,
+      title: "Magic Controls",
+      subtitle: "",
+      pages: [{
+        bullets: [
+          "Equip up to 2 spells.",
+          "Tap a spell button to cast.",
+          "Spells fire in the direction you are facing.",
+          "Each spell has its own cooldown."
+        ]
+      }]
+    }
+  };
+}
+
+function getModeTutorialKey(modeId) {
+  if (modeId === GAME_MODE.ARENA) return TUTORIAL_KEYS.ARENA;
+  if (modeId === GAME_MODE.MAZE) return TUTORIAL_KEYS.MAZE;
+  if (modeId === GAME_MODE.DUNGEON) return TUTORIAL_KEYS.DUNGEON;
+  if (modeId === GAME_MODE.ARMY_VS) return TUTORIAL_KEYS.ARMY_VS;
+  return TUTORIAL_KEYS.ARENA;
+}
+
+function isTutorialDismissed(key) {
+  return Boolean(permanent.tutorialDismissals && permanent.tutorialDismissals[key]);
+}
+
+function ownsAnyMagic() {
+  return getOwnedMagicIds().length > 0;
+}
+
+function queueGameplayTutorialsForCurrentMode() {
+  const definitions = getTutorialDefinitions();
+  const queue = [];
+  const modeKey = getModeTutorialKey(currentGameMode);
+  if (!isTutorialDismissed(modeKey) && definitions[modeKey]) queue.push(definitions[modeKey]);
+  if (!isTutorialDismissed(TUTORIAL_KEYS.BASIC)) queue.push(definitions[TUTORIAL_KEYS.BASIC]);
+  if (ownsAnyMagic() && !isTutorialDismissed(TUTORIAL_KEYS.MAGIC)) queue.push(definitions[TUTORIAL_KEYS.MAGIC]);
+  startTutorialSequence(queue);
+}
+
+function openTutorialHelpMenu() {
+  const definitions = getTutorialDefinitions();
+  startTutorialSequence([
+    definitions[TUTORIAL_KEYS.BASIC],
+    definitions[TUTORIAL_KEYS.MAGIC],
+    definitions[TUTORIAL_KEYS.ARENA],
+    definitions[TUTORIAL_KEYS.MAZE],
+    definitions[TUTORIAL_KEYS.DUNGEON],
+    definitions[TUTORIAL_KEYS.ARMY_VS]
+  ].filter(Boolean), { manual: true });
+}
+
+function startTutorialSequence(definitions, options = {}) {
+  tutorialQueue = (definitions || []).filter(Boolean).map((definition) => ({
+    ...definition,
+    pageIndex: 0,
+    dontShowAgain: false,
+    manual: Boolean(options.manual)
+  }));
+  tutorialPopup = null;
+  showNextTutorialPopup();
+}
+
+function showNextTutorialPopup() {
+  tutorialPopup = tutorialQueue.shift() || null;
+  tutorialButtons = {};
+  if (tutorialPopup) {
+    tutorialPopup.pageIndex = 0;
+    tutorialPopup.dontShowAgain = false;
+    resetMobileControls();
+    mouse.down = false;
+  }
+}
+
+function closeTutorialPopup() {
+  if (!tutorialPopup) return;
+  if (tutorialPopup.dontShowAgain) {
+    permanent.tutorialDismissals = normalizeTutorialDismissals(permanent.tutorialDismissals);
+    permanent.tutorialDismissals[tutorialPopup.key] = true;
+    savePermanentProgress();
+  }
+  tutorialPopup = null;
+  tutorialButtons = {};
+  showNextTutorialPopup();
+}
+
+function drawTutorialPopup() {
+  if (!tutorialPopup) return;
+  tutorialButtons = {};
+  ctx.save();
+  ctx.fillStyle = "rgba(5, 8, 12, 0.78)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  const portrait = (window.innerHeight || HEIGHT) >= (window.innerWidth || WIDTH);
+  const margin = scaledUiSize(portrait ? 22 : 34, 28);
+  const panelWidth = Math.min(WIDTH - margin * 2, scaledUiSize(portrait ? 470 : 680, 560));
+  const panelHeight = Math.min(HEIGHT - margin * 2, scaledUiSize(portrait ? 560 : 520, 480));
+  const x = WIDTH / 2 - panelWidth / 2;
+  const y = HEIGHT / 2 - panelHeight / 2;
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(x, y, panelWidth, panelHeight);
+  ctx.strokeStyle = "#75d7ff";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, panelWidth, panelHeight);
+
+  const page = tutorialPopup.pages[tutorialPopup.pageIndex] || tutorialPopup.pages[0] || {};
+  const pad = scaledUiSize(28, 28);
+  let textY = y + pad + scaledUiSize(18, 18);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(scaledUiSize(30, 28))}px system-ui, sans-serif`);
+  ctx.fillText(tutorialPopup.title, WIDTH / 2, textY);
+  textY += scaledUiSize(34, 34);
+  if (tutorialPopup.subtitle) {
+    ctx.fillStyle = "#cbd5df";
+    setCanvasFont(`700 ${Math.round(scaledUiSize(15, 15))}px system-ui, sans-serif`);
+    drawWrappedText(tutorialPopup.subtitle, x + pad, textY, panelWidth - pad * 2, scaledUiSize(24, 22), "center");
+    textY += scaledUiSize(50, 48);
+  }
+
+  ctx.textAlign = "left";
+  const lineHeight = scaledUiSize(27, 25);
+  setCanvasFont(`700 ${Math.round(scaledUiSize(15, 15))}px system-ui, sans-serif`);
+  for (const bullet of page.bullets || []) {
+    ctx.fillStyle = "#f4f6f8";
+    const used = drawWrappedText(`- ${bullet}`, x + pad, textY, panelWidth - pad * 2, lineHeight, "left");
+    textY += used + scaledUiSize(7, 7);
+  }
+  for (const section of page.sections || []) {
+    ctx.fillStyle = "#75d7ff";
+    const used = drawWrappedText(section, x + pad, textY + scaledUiSize(4, 4), panelWidth - pad * 2, lineHeight, "left");
+    textY += used + scaledUiSize(8, 8);
+  }
+  if (page.warning) {
+    ctx.fillStyle = "#ffd166";
+    const used = drawWrappedText(page.warning, x + pad, textY + scaledUiSize(4, 4), panelWidth - pad * 2, lineHeight, "left");
+    textY += used + scaledUiSize(8, 8);
+  }
+
+  const checkboxSize = scaledUiSize(26, 24);
+  const checkboxY = y + panelHeight - scaledUiSize(126, 124);
+  tutorialButtons.checkbox = { x: x + pad, y: checkboxY - checkboxSize + scaledUiSize(6, 6), width: checkboxSize, height: checkboxSize };
+  ctx.strokeStyle = "#cbd5df";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(tutorialButtons.checkbox.x, tutorialButtons.checkbox.y, checkboxSize, checkboxSize);
+  if (tutorialPopup.dontShowAgain) {
+    ctx.strokeStyle = "#8de85c";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(tutorialButtons.checkbox.x + checkboxSize * 0.2, tutorialButtons.checkbox.y + checkboxSize * 0.55);
+    ctx.lineTo(tutorialButtons.checkbox.x + checkboxSize * 0.43, tutorialButtons.checkbox.y + checkboxSize * 0.78);
+    ctx.lineTo(tutorialButtons.checkbox.x + checkboxSize * 0.82, tutorialButtons.checkbox.y + checkboxSize * 0.25);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`700 ${Math.round(scaledUiSize(14, 14))}px system-ui, sans-serif`);
+  ctx.textBaseline = "middle";
+  ctx.fillText("Don't show again", x + pad + checkboxSize + scaledUiSize(12, 12), checkboxY + scaledUiSize(2, 2));
+  ctx.textBaseline = "alphabetic";
+
+  const buttonY = y + panelHeight - scaledUiSize(78, 76);
+  const buttonH = scaledUiSize(54, 52);
+  const buttonGap = scaledUiSize(14, 14);
+  const buttonW = scaledUiSize(126, 118);
+  const hasBack = tutorialPopup.pageIndex > 0;
+  const hasNext = tutorialPopup.pageIndex < (tutorialPopup.pages.length - 1);
+  if (hasBack) {
+    tutorialButtons.back = drawButtonWithFont(x + pad, buttonY, buttonW, buttonH, "Back", false, scaledUiSize(14, 14));
+  }
+  const primaryLabel = hasNext ? "Next" : "Got It";
+  tutorialButtons.primary = drawButtonWithFont(x + panelWidth - pad - buttonW, buttonY, buttonW, buttonH, primaryLabel, false, scaledUiSize(14, 14));
+  if (tutorialPopup.pages.length > 1) {
+    ctx.fillStyle = "#9aa7b4";
+    setCanvasFont(`700 ${Math.round(scaledUiSize(12, 12))}px system-ui, sans-serif`);
+    ctx.textAlign = "center";
+    ctx.fillText(`${tutorialPopup.pageIndex + 1} / ${tutorialPopup.pages.length}`, WIDTH / 2, buttonY + buttonH / 2 + scaledUiSize(5, 5));
+  }
+  ctx.restore();
+}
+
+function drawWrappedText(text, x, y, maxWidth, lineHeight, align = "left") {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const testLine = line ? `${line} ${word}` : word;
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) lines.push(line);
+  ctx.textAlign = align;
+  const drawX = align === "center" ? x + maxWidth / 2 : x;
+  for (let i = 0; i < lines.length; i += 1) {
+    ctx.fillText(lines[i], drawX, y + i * lineHeight);
+  }
+  return Math.max(lineHeight, lines.length * lineHeight);
+}
+
+function handleTutorialClick() {
+  if (!tutorialPopup) return false;
+  if (tutorialButtons.checkbox && pointInRect(mouse.x, mouse.y, tutorialButtons.checkbox.x, tutorialButtons.checkbox.y, tutorialButtons.checkbox.width, tutorialButtons.checkbox.height)) {
+    tutorialPopup.dontShowAgain = !tutorialPopup.dontShowAgain;
+    mouse.down = false;
+    return true;
+  }
+  if (tutorialButtons.back && pointInRect(mouse.x, mouse.y, tutorialButtons.back.x, tutorialButtons.back.y, tutorialButtons.back.width, tutorialButtons.back.height)) {
+    tutorialPopup.pageIndex = Math.max(0, tutorialPopup.pageIndex - 1);
+    mouse.down = false;
+    return true;
+  }
+  if (tutorialButtons.primary && pointInRect(mouse.x, mouse.y, tutorialButtons.primary.x, tutorialButtons.primary.y, tutorialButtons.primary.width, tutorialButtons.primary.height)) {
+    if (tutorialPopup.pageIndex < tutorialPopup.pages.length - 1) {
+      tutorialPopup.pageIndex += 1;
+    } else {
+      closeTutorialPopup();
+    }
+    mouse.down = false;
+    return true;
+  }
+  mouse.down = false;
+  return true;
 }
 
 function drawJoystick(joystick, color) {
@@ -4046,7 +4388,66 @@ function truncateText(text, maxLength) {
   return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
 }
 
+function cssToLogical(value) {
+  return value / Math.max(0.01, RENDER_SCALE);
+}
+
+function scaledUiSize(cssPixels, minLogical = 0) {
+  return Math.max(minLogical, cssToLogical(cssPixels));
+}
+
+function getBrowserPwaLayout() {
+  const portrait = !runtimeCapabilities.nativeLanAvailable && (window.innerHeight || HEIGHT) >= (window.innerWidth || WIDTH);
+  return {
+    portrait,
+    titleFont: scaledUiSize(portrait ? 34 : 42, 44),
+    subtitleFont: scaledUiSize(portrait ? 15 : 17, 18),
+    buttonFont: scaledUiSize(portrait ? 16 : 17, 18),
+    smallFont: scaledUiSize(portrait ? 12 : 13, 13),
+    buttonHeight: scaledUiSize(portrait ? 64 : 58, 56),
+    buttonGap: scaledUiSize(portrait ? 12 : 14, 14),
+    top: scaledUiSize(portrait ? 54 : 62, 70),
+    usableWidth: Math.min(WIDTH * 0.86, scaledUiSize(portrait ? 430 : 720, 520))
+  };
+}
+
+function drawButtonWithFont(x, y, width, height, label, disabled = false, fontSize = 18) {
+  const hovered = !disabled && pointInRect(mouse.x, mouse.y, x, y, width, height);
+  ctx.fillStyle = disabled ? "#6c747d" : hovered ? "#f4f6f8" : "#dbe4ec";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "#111418";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+  ctx.fillStyle = disabled ? "#2f3742" : "#111418";
+  setCanvasFont(`800 ${Math.round(fontSize)}px system-ui, sans-serif`);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + width / 2, y + height / 2);
+  ctx.textBaseline = "alphabetic";
+  return { x, y, width, height };
+}
+
+function drawToggleButtonWithFont(x, y, width, height, label, selected, fontSize = 16) {
+  const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
+  ctx.fillStyle = selected ? "#75d7ff" : hovered ? "#f4f6f8" : "#2f3b48";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = selected ? "#f4f6f8" : "#7b8a99";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+  ctx.fillStyle = selected || hovered ? "#101216" : "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(fontSize)}px system-ui, sans-serif`);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + width / 2, y + height / 2);
+  ctx.textBaseline = "alphabetic";
+  return { x, y, width, height };
+}
+
 function drawMenu() {
+  if (!runtimeCapabilities.nativeLanAvailable) {
+    drawBrowserPwaMenu();
+    return;
+  }
   drawArenaPreview();
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4105,6 +4506,98 @@ function drawMenu() {
     ? "APK runtime: native LAN and browser online options are available."
     : "Browser/PWA runtime: use Online Multiplayer for room-based play.";
   ctx.fillText(platformLine, WIDTH / 2, 738);
+  ctx.textAlign = "left";
+}
+
+function drawBrowserPwaMenu() {
+  drawArenaPreview();
+  const layout = getBrowserPwaLayout();
+  const centerX = WIDTH / 2;
+  const buttonW = layout.usableWidth;
+  const buttonH = layout.buttonHeight;
+  const gap = layout.buttonGap;
+  const columnX = centerX - buttonW / 2;
+  const titleY = layout.top + scaledUiSize(32, 32);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.titleFont)}px system-ui, sans-serif`);
+  ctx.fillText("Blade Box Arena", centerX, titleY);
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`600 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText("Browser/PWA build", centerX, titleY + scaledUiSize(34, 34));
+
+  const equippedMagic = getEquippedMagicDefinitions().map((magic) => magic.name).join(" / ") || "No Magic";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText(`KP ${permanent.killPoints}   ${getSelectedWeapon().name}`, centerX, titleY + scaledUiSize(66, 66));
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+  ctx.fillText(`Magic: ${truncateText(equippedMagic, 44)}`, centerX, titleY + scaledUiSize(92, 92));
+
+  modeButtons = [];
+  hostButton = null;
+  joinButton = null;
+  armyVsButton = null;
+  onlineButton = null;
+  fullscreenButton = null;
+
+  let y = titleY + scaledUiSize(126, 126);
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText("Game Mode", centerX, y);
+  y += scaledUiSize(20, 20);
+
+  const playableModes = GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS);
+  if (layout.portrait) {
+    for (const mode of playableModes) {
+      const button = drawToggleButtonWithFont(columnX, y, buttonW, buttonH, `${mode.label} - ${mode.detail}`, selectedGameMode === mode.id, layout.buttonFont);
+      modeButtons.push({ ...button, modeId: mode.id });
+      y += buttonH + gap;
+    }
+  } else {
+    const modeGap = scaledUiSize(12, 12);
+    const modeW = (buttonW - modeGap * 2) / 3;
+    for (let i = 0; i < playableModes.length; i += 1) {
+      const mode = playableModes[i];
+      const button = drawToggleButtonWithFont(columnX + i * (modeW + modeGap), y, modeW, buttonH, mode.label, selectedGameMode === mode.id, layout.buttonFont);
+      modeButtons.push({ ...button, modeId: mode.id });
+    }
+    y += buttonH + gap;
+  }
+
+  menuButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Single Player", false, layout.buttonFont);
+  y += buttonH + gap;
+  onlineButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Multiplayer", false, layout.buttonFont);
+  y += buttonH + gap;
+
+  const secondaryGap = scaledUiSize(12, 12);
+  const secondaryW = layout.portrait ? buttonW : (buttonW - secondaryGap * 2) / 3;
+  if (layout.portrait) {
+    shopButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Shop", false, layout.buttonFont);
+    y += buttonH + gap;
+    equipmentButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Equipment", false, layout.buttonFont);
+    y += buttonH + gap;
+    recordsButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Records", false, layout.buttonFont);
+    y += buttonH + gap;
+  } else {
+    shopButton = drawButtonWithFont(columnX, y, secondaryW, buttonH, "Shop", false, layout.buttonFont);
+    equipmentButton = drawButtonWithFont(columnX + secondaryW + secondaryGap, y, secondaryW, buttonH, "Equipment", false, layout.buttonFont);
+    recordsButton = drawButtonWithFont(columnX + (secondaryW + secondaryGap) * 2, y, secondaryW, buttonH, "Records", false, layout.buttonFont);
+    y += buttonH + gap;
+  }
+
+  fullscreenButton = drawButtonWithFont(columnX, y, buttonW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Enter Fullscreen", false, layout.buttonFont);
+  y += buttonH + gap;
+
+  ctx.fillStyle = "#9aa7b4";
+  setCanvasFont(`600 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+  ctx.fillText("Browser/PWA runtime: use Multiplayer for room-based relay play.", centerX, y + scaledUiSize(16, 16));
+  if (onlineFullscreenHint) {
+    ctx.fillStyle = "#ffd166";
+    setCanvasFont(`800 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+    ctx.fillText(truncateText(onlineFullscreenHint, 86), centerX, y + scaledUiSize(44, 44));
+  }
   ctx.textAlign = "left";
 }
 
@@ -4270,65 +4763,204 @@ function drawShop() {
 
 function drawOnlineLobby() {
   drawArenaPreview();
-  ctx.fillStyle = "rgba(12, 14, 18, 0.82)";
+  ctx.fillStyle = "rgba(12, 14, 18, 0.84)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  onlineLobbyButtons = {};
+  onlineLobbyButtons = { tickRates: [], kicks: [] };
+
+  const inRoom = Boolean(onlineRoomCode && onlineServerTransport.connected);
+  if (!inRoom) {
+    drawOnlineRoomPicker();
+  } else {
+    drawOnlineRoomLobby();
+  }
+  ctx.textAlign = "left";
+}
+
+function drawOnlineRoomPicker() {
+  const layout = getBrowserPwaLayout();
+  const centerX = WIDTH / 2;
+  const panelW = Math.min(WIDTH * 0.82, scaledUiSize(620, 620));
+  const panelX = centerX - panelW / 2;
+  const buttonH = scaledUiSize(64, 56);
+  const buttonGap = scaledUiSize(14, 14);
+  let y = scaledUiSize(110, 120);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
-  setCanvasFont("800 50px system-ui, sans-serif");
-  ctx.fillText("Online Multiplayer", WIDTH / 2, 158);
+  setCanvasFont(`800 ${Math.round(layout.titleFont)}px system-ui, sans-serif`);
+  ctx.fillText("Online Multiplayer", centerX, y);
+  y += scaledUiSize(42, 42);
   ctx.fillStyle = "#cbd5df";
-  setCanvasFont("700 17px system-ui, sans-serif");
-  ctx.fillText(runtimeCapabilities.nativeWrapper ? "Optional online relay; native LAN co-op is still available." : "Browser/PWA rooms use an outbound relay server.", WIDTH / 2, 200);
+  setCanvasFont(`700 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText(runtimeCapabilities.nativeWrapper ? "Optional relay; native LAN remains unchanged." : "Browser/PWA rooms use the configured relay.", centerX, y);
+  y += scaledUiSize(36, 36);
   ctx.fillStyle = getConfiguredOnlineServerUrl() ? "#75d7ff" : "#ffd166";
-  setCanvasFont("700 16px system-ui, sans-serif");
-  ctx.fillText(`Server: ${truncateText(getOnlineServerLabel(), 74)}`, WIDTH / 2, 232);
-
-  ctx.fillStyle = runtimeCapabilities.onlineNow ? "#8de85c" : "#ef476f";
-  ctx.fillText(runtimeCapabilities.onlineNow ? "Browser online" : "Browser offline", WIDTH / 2 - 180, 264);
-  ctx.fillStyle = runtimeCapabilities.websocketAvailable ? "#8de85c" : "#ef476f";
-  ctx.fillText(runtimeCapabilities.websocketAvailable ? "WebSocket ready" : "WebSocket unavailable", WIDTH / 2 + 180, 264);
+  ctx.fillText(`Server: ${truncateText(getOnlineServerLabel(), 74)}`, centerX, y);
+  y += scaledUiSize(36, 36);
+  ctx.fillStyle = "#cbd5df";
+  ctx.fillText(truncateText(onlineStatus, 82), centerX, y);
+  y += scaledUiSize(50, 50);
 
   ctx.fillStyle = "#202832";
-  ctx.fillRect(WIDTH / 2 - 300, 292, 600, 250);
+  ctx.fillRect(panelX, y, panelW, scaledUiSize(250, 240));
   ctx.strokeStyle = "#5d6e7e";
   ctx.lineWidth = 2;
-  ctx.strokeRect(WIDTH / 2 - 300, 292, 600, 250);
+  ctx.strokeRect(panelX, y, panelW, scaledUiSize(250, 240));
 
+  const cardY = y + scaledUiSize(40, 40);
   ctx.fillStyle = "#f4f6f8";
-  setCanvasFont("800 22px system-ui, sans-serif");
-  ctx.fillText(`Mode: ${getGameModeDefinition(getSelectedPlayableMode()).label}`, WIDTH / 2, 332);
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText(`Mode: ${getGameModeDefinition(getSelectedPlayableMode()).label}`, centerX, cardY);
   ctx.fillStyle = "#ffd166";
-  setCanvasFont("800 18px system-ui, sans-serif");
-  ctx.fillText(onlineRoomCode ? `Room ${onlineRoomCode}` : "No room yet", WIDTH / 2, 368);
-  ctx.fillStyle = "#cbd5df";
-  setCanvasFont("700 16px system-ui, sans-serif");
-  ctx.fillText(truncateText(onlineStatus, 78), WIDTH / 2, 402);
-
-  if (lobbyPlayers.length > 0) {
-    setCanvasFont("700 16px system-ui, sans-serif");
-    for (let i = 0; i < Math.min(lobbyPlayers.length, 4); i += 1) {
-      ctx.fillStyle = PLAYER_COLORS[i % PLAYER_COLORS.length];
-      ctx.fillText(`${lobbyPlayers[i].id.toUpperCase()}  ${lobbyPlayers[i].name}`, WIDTH / 2, 436 + i * 24);
-    }
-  } else {
-    ctx.fillStyle = "#9aa7b4";
-    setCanvasFont("700 16px system-ui, sans-serif");
-    ctx.fillText("Create a room or join by code.", WIDTH / 2, 446);
-  }
+  ctx.fillText(onlineRoomCode ? `Room Code: ${onlineRoomCode}` : "Set a room code to join friends.", centerX, cardY + scaledUiSize(36, 36));
 
   const unavailable = !getConfiguredOnlineServerUrl() || !runtimeCapabilities.websocketAvailable;
-  onlineLobbyButtons.create = drawButton(WIDTH / 2 - 330, 584, 200, 56, "Create Room", unavailable);
-  onlineLobbyButtons.join = drawButton(WIDTH / 2 - 100, 584, 200, 56, "Join Room", unavailable);
-  onlineLobbyButtons.code = drawButton(WIDTH / 2 + 130, 584, 200, 56, onlineRoomCode ? "Edit Code" : "Room Code");
-  onlineLobbyButtons.start = drawButton(WIDTH / 2 - 220, 678, 200, 56, "Start Game", sessionMode !== SESSION.HOST || !onlineRoomCode);
-  onlineLobbyButtons.back = drawButton(WIDTH / 2 + 20, 678, 200, 56, "Back");
+  const buttonW = Math.min(panelW * 0.86, scaledUiSize(430, 430));
+  const buttonX = centerX - buttonW / 2;
+  onlineLobbyButtons.create = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118), buttonW, buttonH, "Create Room", unavailable, layout.buttonFont);
+  onlineLobbyButtons.join = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118) + buttonH + buttonGap, buttonW, buttonH, "Join Room", unavailable, layout.buttonFont);
+  onlineLobbyButtons.code = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118) + (buttonH + buttonGap) * 2, buttonW, buttonH, onlineRoomCode ? "Edit Room Code" : "Room Code", false, layout.buttonFont);
+  onlineLobbyButtons.back = drawButtonWithFont(centerX - buttonW / 2, y + scaledUiSize(118, 118) + (buttonH + buttonGap) * 3, buttonW, buttonH, "Back", false, layout.buttonFont);
+}
 
-  ctx.fillStyle = "#9aa7b4";
-  setCanvasFont("600 14px system-ui, sans-serif");
-  ctx.fillText("This first version relays host-authoritative snapshots. The relay does not simulate gameplay yet.", WIDTH / 2, 770);
+function drawOnlineRoomLobby() {
+  const layout = getBrowserPwaLayout();
+  const portrait = layout.portrait || WIDTH < scaledUiSize(760, 760);
+  const margin = scaledUiSize(28, 28);
+  const gap = scaledUiSize(18, 18);
+  const top = scaledUiSize(78, 78);
+  const panelH = HEIGHT - top - scaledUiSize(88, 88);
+  const leftW = portrait ? WIDTH - margin * 2 : Math.min(WIDTH * 0.44, scaledUiSize(510, 510));
+  const rightW = portrait ? WIDTH - margin * 2 : WIDTH - margin * 3 - leftW;
+  const leftX = margin;
+  const rightX = portrait ? margin : leftX + leftW + margin;
+  const chatY = portrait ? top + panelH * 0.55 + gap : top;
+  const chatH = portrait ? Math.max(scaledUiSize(300, 300), HEIGHT - chatY - scaledUiSize(92, 92)) : panelH;
+  const leftH = portrait ? panelH * 0.52 : panelH;
+  const lobbyMode = getGameModeDefinition(onlineLobbyState.mode || selectedGameMode).label;
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.titleFont * 0.86)}px system-ui, sans-serif`);
+  ctx.fillText("Online Lobby", WIDTH / 2, scaledUiSize(48, 48));
+
+  drawPanel(leftX, top, leftW, leftH);
+  drawPanel(rightX, chatY, rightW, chatH);
+
   ctx.textAlign = "left";
+  let y = top + scaledUiSize(36, 36);
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText(`Mode: ${lobbyMode}`, leftX + scaledUiSize(24, 24), y);
+  y += scaledUiSize(32, 32);
+  ctx.fillStyle = "#ffd166";
+  ctx.fillText(`Room: ${onlineRoomCode}`, leftX + scaledUiSize(24, 24), y);
+  y += scaledUiSize(30, 30);
+  if (onlineRoomName) {
+    ctx.fillStyle = "#cbd5df";
+    ctx.fillText(`Name: ${truncateText(onlineRoomName, 34)}`, leftX + scaledUiSize(24, 24), y);
+    y += scaledUiSize(28, 28);
+  }
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+  ctx.fillText("Share this room code with friends.", leftX + scaledUiSize(24, 24), y);
+  y += scaledUiSize(34, 34);
+  ctx.fillStyle = "#75d7ff";
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText(`Tick Rate: ${onlineTickRate} Hz`, leftX + scaledUiSize(24, 24), y);
+  y += scaledUiSize(34, 34);
+  ctx.fillStyle = "#f4f6f8";
+  ctx.fillText("Players", leftX + scaledUiSize(24, 24), y);
+  y += scaledUiSize(28, 28);
+
+  const displayPlayers = getOnlineLobbyDisplayPlayers();
+  for (let i = 0; i < Math.max(1, displayPlayers.length); i += 1) {
+    const lobbyPlayer = displayPlayers[i];
+    const rowY = y + i * scaledUiSize(34, 34);
+    ctx.fillStyle = lobbyPlayer ? PLAYER_COLORS[i % PLAYER_COLORS.length] : "#7b8a99";
+    setCanvasFont(`800 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+    ctx.fillText(lobbyPlayer ? `${lobbyPlayer.name}${lobbyPlayer.host ? "  HOST" : ""}` : "Waiting...", leftX + scaledUiSize(32, 32), rowY);
+    if (sessionMode === SESSION.HOST && lobbyPlayer && !lobbyPlayer.host && lobbyPlayer.clientId) {
+      const kick = drawButtonWithFont(leftX + leftW - scaledUiSize(62, 62), rowY - scaledUiSize(22, 22), scaledUiSize(38, 38), scaledUiSize(30, 30), "X", false, layout.smallFont);
+      onlineLobbyButtons.kicks.push({ ...kick, clientId: lobbyPlayer.clientId });
+    }
+  }
+
+  const controlsY = top + leftH - scaledUiSize(sessionMode === SESSION.HOST ? 210 : 142, sessionMode === SESSION.HOST ? 210 : 142);
+  onlineLobbyButtons.start = drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY, leftW - scaledUiSize(48, 48), scaledUiSize(58, 56), "Start Game", sessionMode !== SESSION.HOST || !onlineRoomCode, layout.buttonFont);
+  onlineLobbyButtons.options = sessionMode === SESSION.HOST
+    ? drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY + scaledUiSize(70, 70), leftW - scaledUiSize(48, 48), scaledUiSize(54, 52), onlineConnectionOptionsOpen ? "Hide Server Options" : "Server/Connection Options", false, layout.smallFont)
+    : null;
+  onlineLobbyButtons.back = drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY + scaledUiSize(sessionMode === SESSION.HOST ? 134 : 70, sessionMode === SESSION.HOST ? 134 : 70), leftW - scaledUiSize(48, 48), scaledUiSize(54, 52), "Exit Lobby", false, layout.buttonFont);
+
+  if (onlineConnectionOptionsOpen && sessionMode === SESSION.HOST) {
+    drawOnlineConnectionOptions(leftX, controlsY - scaledUiSize(180, 180), leftW);
+  }
+
+  drawOnlineChat(rightX, chatY, rightW, chatH, layout);
+}
+
+function drawPanel(x, y, width, height) {
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "#5d6e7e";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+}
+
+function drawOnlineConnectionOptions(x, y, width) {
+  const innerX = x + scaledUiSize(24, 24);
+  const innerW = width - scaledUiSize(48, 48);
+  ctx.fillStyle = "rgba(17, 20, 24, 0.92)";
+  ctx.fillRect(innerX, y, innerW, scaledUiSize(166, 166));
+  ctx.strokeStyle = "#75d7ff";
+  ctx.strokeRect(innerX, y, innerW, scaledUiSize(166, 166));
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(scaledUiSize(14, 14))}px system-ui, sans-serif`);
+  ctx.fillText("Tick Rate: 50-100 Hz", innerX + scaledUiSize(14, 14), y + scaledUiSize(28, 28));
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`600 ${Math.round(scaledUiSize(11, 11))}px system-ui, sans-serif`);
+  ctx.fillText("Multiplayer-server tick update rate. Higher values provide smoother performance but increase battery usage.", innerX + scaledUiSize(14, 14), y + scaledUiSize(52, 52));
+  const optionGap = scaledUiSize(8, 8);
+  const optionW = (innerW - scaledUiSize(28, 28) - optionGap * (ONLINE_TICK_RATE_OPTIONS.length - 1)) / ONLINE_TICK_RATE_OPTIONS.length;
+  const optionY = y + scaledUiSize(74, 74);
+  for (let i = 0; i < ONLINE_TICK_RATE_OPTIONS.length; i += 1) {
+    const rate = ONLINE_TICK_RATE_OPTIONS[i];
+    const button = drawToggleButtonWithFont(innerX + scaledUiSize(14, 14) + i * (optionW + optionGap), optionY, optionW, scaledUiSize(40, 40), `${rate}`, onlineTickRate === rate, scaledUiSize(11, 11));
+    onlineLobbyButtons.tickRates.push({ ...button, rate });
+  }
+  if (onlineTickRate >= 80) {
+    ctx.fillStyle = "#ef476f";
+    setCanvasFont(`800 ${Math.round(scaledUiSize(12, 12))}px system-ui, sans-serif`);
+    ctx.fillText("HIGH BATTERY USAGE!", innerX + scaledUiSize(14, 14), y + scaledUiSize(136, 136));
+  }
+  onlineLobbyButtons.roomName = drawButtonWithFont(innerX + innerW - scaledUiSize(166, 166), y + scaledUiSize(122, 122), scaledUiSize(152, 152), scaledUiSize(34, 34), onlineRoomName ? "Edit Name" : "Room Name", false, scaledUiSize(11, 11));
+}
+
+function drawOnlineChat(x, y, width, height, layout) {
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
+  ctx.fillText("Lobby Chat", x + scaledUiSize(24, 24), y + scaledUiSize(36, 36));
+  ctx.fillStyle = "#9aa7b4";
+  setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+  ctx.fillText(`Status: ${truncateText(onlineStatus, 54)}`, x + scaledUiSize(24, 24), y + scaledUiSize(64, 64));
+  const messages = onlineLobbyState.chat || [];
+  const first = Math.max(0, messages.length - 9);
+  let lineY = y + scaledUiSize(102, 102);
+  for (let i = first; i < messages.length; i += 1) {
+    const message = messages[i];
+    ctx.fillStyle = message.system ? "#ffd166" : "#cbd5df";
+    setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+    ctx.fillText(truncateText(`${message.sender || "Player"}: ${message.text || ""}`, 62), x + scaledUiSize(24, 24), lineY);
+    lineY += scaledUiSize(28, 28);
+  }
+  const inputH = scaledUiSize(54, 52);
+  const sendW = scaledUiSize(120, 112);
+  const inputY = y + height - scaledUiSize(76, 76);
+  onlineLobbyButtons.chatInput = drawButtonWithFont(x + scaledUiSize(24, 24), inputY, width - scaledUiSize(62, 62) - sendW, inputH, "Tap Message", false, layout.smallFont);
+  onlineLobbyButtons.chatSend = drawButtonWithFont(x + width - scaledUiSize(24, 24) - sendW, inputY, sendW, inputH, "Send", false, layout.smallFont);
 }
 
 function drawShopTier(x, y, tier) {
@@ -4790,6 +5422,11 @@ function gameLoop(time) {
 }
 
 function handleCanvasClick() {
+  if (tutorialPopup) {
+    handleTutorialClick();
+    return;
+  }
+
   if (modeState.choicePending && currentGameMode === GAME_MODE.MAZE) {
     if (sessionMode === SESSION.CLIENT) return;
     for (const button of modeChoiceButtons) {
@@ -4962,6 +5599,41 @@ function handleCanvasClick() {
   }
 
   if (gameState === STATE.ONLINE_LOBBY) {
+    for (const button of onlineLobbyButtons.kicks || []) {
+      if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
+        mouse.down = false;
+        kickOnlineClient(button.clientId);
+        return;
+      }
+    }
+    for (const button of onlineLobbyButtons.tickRates || []) {
+      if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
+        mouse.down = false;
+        onlineTickRate = button.rate;
+        sendOnlineLobbySettings();
+        return;
+      }
+    }
+    if (onlineLobbyButtons.options && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.options.x, onlineLobbyButtons.options.y, onlineLobbyButtons.options.width, onlineLobbyButtons.options.height)) {
+      mouse.down = false;
+      onlineConnectionOptionsOpen = !onlineConnectionOptionsOpen;
+      return;
+    }
+    if (onlineLobbyButtons.roomName && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.roomName.x, onlineLobbyButtons.roomName.y, onlineLobbyButtons.roomName.width, onlineLobbyButtons.roomName.height)) {
+      mouse.down = false;
+      promptOnlineRoomName();
+      return;
+    }
+    if (onlineLobbyButtons.chatInput && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.chatInput.x, onlineLobbyButtons.chatInput.y, onlineLobbyButtons.chatInput.width, onlineLobbyButtons.chatInput.height)) {
+      mouse.down = false;
+      promptAndSendOnlineChat();
+      return;
+    }
+    if (onlineLobbyButtons.chatSend && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.chatSend.x, onlineLobbyButtons.chatSend.y, onlineLobbyButtons.chatSend.width, onlineLobbyButtons.chatSend.height)) {
+      mouse.down = false;
+      promptAndSendOnlineChat();
+      return;
+    }
     if (onlineLobbyButtons.create && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.create.x, onlineLobbyButtons.create.y, onlineLobbyButtons.create.width, onlineLobbyButtons.create.height)) {
       mouse.down = false;
       createOnlineRoom();
@@ -5094,6 +5766,11 @@ function handlePointerDown(event) {
   touchInputSeen = true;
   event.preventDefault();
   updateMousePosition(event);
+
+  if (tutorialPopup) {
+    handleCanvasClick();
+    return;
+  }
 
   if (gameState === STATE.OPTIONS) {
     handleCanvasClick();
@@ -5285,6 +5962,7 @@ function createNeutralInput() {
 
 function getLocalPlayerInput() {
   const input = createNeutralInput();
+  if (tutorialPopup) return input;
   if (coopLevelMenuOpen) return input;
   if (keys.has("w") || keys.has("arrowup")) input.moveY -= 1;
   if (keys.has("s") || keys.has("arrowdown")) input.moveY += 1;
@@ -5534,8 +6212,14 @@ function getOnlineServerLabel() {
 
 function requestAppLikeDisplay() {
   if (runtimeCapabilities.nativeWrapper) return;
-  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
-  document.documentElement.requestFullscreen().catch(() => {});
+  if (document.fullscreenElement) return;
+  if (!document.documentElement.requestFullscreen) {
+    onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+    return;
+  }
+  document.documentElement.requestFullscreen().catch(() => {
+    onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+  });
   if (screen.orientation?.lock) {
     screen.orientation.lock("landscape").catch(() => {});
   }
@@ -5554,7 +6238,12 @@ function toggleBrowserFullscreen() {
     return;
   }
   if (document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen().catch(() => {});
+    document.documentElement.requestFullscreen().catch(() => {
+      onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+    });
+  } else {
+    onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+    return;
   }
   if (screen.orientation?.lock) {
     screen.orientation.lock("landscape").catch(() => {});
@@ -5648,7 +6337,9 @@ function createOnlineServerTransport() {
           type: "createRoom",
           protocolVersion: APP_CONFIG.protocolVersion,
           name: "Blade Box Arena Host",
-          mode: selectedGameMode
+          mode: selectedGameMode,
+          roomName: onlineRoomName,
+          tickRate: onlineTickRate
         });
       });
     },
@@ -5740,11 +6431,21 @@ function loadPermanentProgress() {
       weaponId: getWeaponById(selectedWeapon).id,
       ownedWeaponIds,
       ownedMagicIds,
-      equippedMagicIds: sanitizeEquippedMagicIds(parsed.equippedMagicIds, ownedMagicIds)
+      equippedMagicIds: sanitizeEquippedMagicIds(parsed.equippedMagicIds, ownedMagicIds),
+      tutorialDismissals: normalizeTutorialDismissals(parsed.tutorialDismissals)
     };
   } catch (error) {
-    return { killPoints: 0, swordTier: 0, weaponId: DEFAULT_WEAPON_ID, ownedWeaponIds: [DEFAULT_WEAPON_ID], ownedMagicIds: [], equippedMagicIds: [] };
+    return { killPoints: 0, swordTier: 0, weaponId: DEFAULT_WEAPON_ID, ownedWeaponIds: [DEFAULT_WEAPON_ID], ownedMagicIds: [], equippedMagicIds: [], tutorialDismissals: normalizeTutorialDismissals() };
   }
+}
+
+function normalizeTutorialDismissals(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalized = {};
+  for (const key of Object.values(TUTORIAL_KEYS)) {
+    normalized[key] = Boolean(source[key]);
+  }
+  return normalized;
 }
 
 function savePermanentProgress() {
@@ -5755,6 +6456,7 @@ function savePermanentProgress() {
       permanent.weaponId = DEFAULT_WEAPON_ID;
     }
     permanent.equippedMagicIds = sanitizeEquippedMagicIds(permanent.equippedMagicIds, permanent.ownedMagicIds);
+    permanent.tutorialDismissals = normalizeTutorialDismissals(permanent.tutorialDismissals);
     localStorage.setItem("bladeBoxArena.permanent", JSON.stringify(permanent));
   } catch (error) {
     // Local storage is optional; gameplay should continue without it.
@@ -5956,6 +6658,7 @@ function openOnlineLobby() {
   pendingClientIds.clear();
   remoteInputs.clear();
   clientIdToPlayerId.clear();
+  resetOnlineLobbyState();
   gameState = STATE.ONLINE_LOBBY;
   onlineStatus = getConfiguredOnlineServerUrl()
     ? `Ready for online rooms via ${getOnlineServerLabel()}.`
@@ -5969,12 +6672,98 @@ function promptForOnlineRoomCode() {
   onlineStatus = onlineRoomCode ? `Room code set to ${onlineRoomCode}` : "Room code cleared.";
 }
 
+function getOnlineLobbyDisplayPlayers() {
+  if (onlineLobbyState.players && onlineLobbyState.players.length > 0) {
+    return onlineLobbyState.players;
+  }
+  return lobbyPlayers.map((lobbyPlayer, index) => ({
+    clientId: lobbyPlayer.clientId,
+    playerId: lobbyPlayer.id,
+    name: lobbyPlayer.name || `Player ${index + 1}`,
+    host: index === 0 || lobbyPlayer.clientId === null
+  }));
+}
+
+function resetOnlineLobbyState() {
+  onlineLobbyState = {
+    roomCode: "",
+    mode: selectedGameMode,
+    roomName: "",
+    tickRate: DEFAULT_ONLINE_TICK_RATE,
+    players: [],
+    chat: []
+  };
+  onlineConnectionOptionsOpen = false;
+}
+
+function applyOnlineLobbyState(state) {
+  if (!state) return;
+  onlineLobbyState = {
+    roomCode: state.roomCode || onlineRoomCode || "",
+    mode: state.mode ? getGameModeDefinition(state.mode).id : selectedGameMode,
+    roomName: String(state.roomName || ""),
+    tickRate: ONLINE_TICK_RATE_OPTIONS.includes(Number(state.tickRate)) ? Number(state.tickRate) : onlineTickRate,
+    players: Array.isArray(state.players) ? state.players : [],
+    chat: Array.isArray(state.chat) ? state.chat.slice(-ONLINE_CHAT_MAX_MESSAGES) : onlineLobbyState.chat
+  };
+  if (onlineLobbyState.roomCode) onlineRoomCode = onlineLobbyState.roomCode;
+  if (onlineLobbyState.mode) selectedGameMode = onlineLobbyState.mode;
+  onlineRoomName = onlineLobbyState.roomName;
+  onlineTickRate = onlineLobbyState.tickRate;
+}
+
+function sendOnlineLobbySettings() {
+  if (sessionMode !== SESSION.HOST || !onlineServerTransport.connected) return;
+  onlineServerTransport.sendRaw({
+    type: "updateLobbySettings",
+    roomCode: onlineRoomCode,
+    mode: selectedGameMode,
+    roomName: onlineRoomName,
+    tickRate: onlineTickRate
+  });
+}
+
+function promptOnlineRoomName() {
+  if (sessionMode !== SESSION.HOST) return;
+  const entered = window.prompt("Optional room name", onlineRoomName || "");
+  if (entered === null) return;
+  onlineRoomName = entered.trim().slice(0, 40);
+  sendOnlineLobbySettings();
+}
+
+function promptAndSendOnlineChat() {
+  if (!onlineServerTransport.connected || !onlineRoomCode) return;
+  const entered = window.prompt("Lobby chat message", "");
+  if (entered === null) return;
+  const text = sanitizeOnlineChatText(entered);
+  if (!text) return;
+  onlineServerTransport.sendRaw({ type: "chat", roomCode: onlineRoomCode, text });
+}
+
+function sanitizeOnlineChatText(text) {
+  return String(text || "")
+    .replace(/[\u0000-\u001f\u007f<>]/g, "")
+    .trim()
+    .slice(0, ONLINE_CHAT_MAX_LENGTH);
+}
+
+function kickOnlineClient(clientId) {
+  if (sessionMode !== SESSION.HOST || !clientId) return;
+  onlineServerTransport.sendRaw({ type: "kickClient", roomCode: onlineRoomCode, targetClientId: clientId });
+  removeLobbyClient(clientId);
+  onlineStatus = `Removed ${clientId} from room.`;
+  broadcastLobbyState();
+}
+
 async function createOnlineRoom() {
   activeNetworkTransport = onlineServerTransport;
   sessionMode = SESSION.HOST;
   localPlayerId = "p1";
   selectedGameMode = getSelectedPlayableMode();
   lobbyPlayers = [{ id: "p1", name: "Player 1", clientId: null, swordTier: permanent.swordTier, weaponId: permanent.weaponId, magicIds: permanent.equippedMagicIds, team: null }];
+  onlineTickRate = DEFAULT_ONLINE_TICK_RATE;
+  onlineRoomName = "";
+  resetOnlineLobbyState();
   pendingClientIds.clear();
   remoteInputs.clear();
   clientIdToPlayerId.clear();
@@ -5994,10 +6783,10 @@ async function joinOnlineRoom() {
   }
   activeNetworkTransport = onlineServerTransport;
   sessionMode = SESSION.CLIENT;
-  activeNetworkTransport = nativeLanTransport;
   localPlayerId = "p2";
   lobbyPlayers = [];
   players = [];
+  resetOnlineLobbyState();
   onlineStatus = `Connecting to room ${onlineRoomCode}...`;
   try {
     await onlineServerTransport.joinRoom(onlineRoomCode);
@@ -6094,6 +6883,10 @@ function startHostCoopGame() {
   }
   resetMobileControls();
   stopDiscoveryBroadcast();
+  if (transport.id === "onlineServer") {
+    hostSnapshotRate = ONLINE_TICK_RATE_OPTIONS.includes(onlineTickRate) ? onlineTickRate : DEFAULT_ONLINE_TICK_RATE;
+    onlineServerTransport.sendRaw({ type: "startMatch", roomCode: onlineRoomCode });
+  }
   mouse.down = false;
   prepareModeRun(selectedGameMode);
   players = lobbyPlayers.map((lobbyPlayer, index) => createPlayer(lobbyPlayer.id, lobbyPlayer.name, index, lobbyPlayer.swordTier, lobbyPlayer.weaponId, lobbyPlayer.magicIds));
@@ -6105,6 +6898,7 @@ function startHostCoopGame() {
   startModeCombat();
   broadcastNetworkMessage({ type: "start", localPlayerId: null, snapshot: createSnapshot() });
   sendSnapshotToClients();
+  queueGameplayTutorialsForCurrentMode();
 }
 
 function startClientCoopGame(snapshot) {
@@ -6115,6 +6909,7 @@ function startClientCoopGame(snapshot) {
   applySnapshot(snapshot);
   beginRunStats();
   networkStatus = "In co-op match";
+  queueGameplayTutorialsForCurrentMode();
 }
 
 function configureArmyVsPlayers() {
@@ -6157,6 +6952,7 @@ function handleOnlineServerMessage(message) {
     hostIpAddress = onlineRoomCode || "Online";
     onlineStatus = `Room ${onlineRoomCode} created. Share the code with browser players.`;
     networkStatus = onlineStatus;
+    if (message.lobbyState) applyOnlineLobbyState(message.lobbyState);
     broadcastLobbyState();
     return;
   }
@@ -6167,6 +6963,30 @@ function handleOnlineServerMessage(message) {
     onlineRoomCode = onlineServerTransport.roomCode;
     onlineStatus = `Joined room ${onlineRoomCode}. Waiting for host.`;
     networkStatus = onlineStatus;
+    if (message.lobbyState) applyOnlineLobbyState(message.lobbyState);
+    return;
+  }
+
+  if (message.type === "lobbyState") {
+    applyOnlineLobbyState(message);
+    return;
+  }
+
+  if (message.type === "lobbyChat") {
+    const nextChat = (onlineLobbyState.chat || []).concat(message.message || {}).slice(-ONLINE_CHAT_MAX_MESSAGES);
+    onlineLobbyState = { ...onlineLobbyState, chat: nextChat };
+    return;
+  }
+
+  if (message.type === "kicked") {
+    onlineStatus = message.reason || "Removed from room";
+    networkStatus = onlineStatus;
+    onlineRoomCode = "";
+    lobbyPlayers = [];
+    onlineServerTransport.closeSocket();
+    sessionMode = SESSION.SINGLE;
+    resetOnlineLobbyState();
+    gameState = STATE.ONLINE_LOBBY;
     return;
   }
 
@@ -6190,7 +7010,9 @@ function handleOnlineServerMessage(message) {
       onlineStatus = "Host disconnected.";
       networkStatus = onlineStatus;
       stopNetworkSession(false);
-      returnToMenu();
+      onlineRoomCode = "";
+      resetOnlineLobbyState();
+      gameState = STATE.ONLINE_LOBBY;
     }
     return;
   }
@@ -6286,6 +7108,7 @@ function handleClientNetworkMessage(message) {
   if (message.type === "lobby") {
     lobbyPlayers = message.players || [];
     if (message.mode) selectedGameMode = getGameModeDefinition(message.mode).id;
+    if (message.tickRate && ONLINE_TICK_RATE_OPTIONS.includes(Number(message.tickRate))) onlineTickRate = Number(message.tickRate);
     return;
   }
 
@@ -6339,7 +7162,10 @@ function applyClientLevelOffer(message) {
 
 function broadcastLobbyState() {
   if (sessionMode !== SESSION.HOST) return;
-  broadcastNetworkMessage({ type: "lobby", players: lobbyPlayers, mode: selectedGameMode });
+  broadcastNetworkMessage({ type: "lobby", players: lobbyPlayers, mode: selectedGameMode, tickRate: onlineTickRate, roomName: onlineRoomName });
+  if (activeNetworkTransport?.id === "onlineServer") {
+    sendOnlineLobbySettings();
+  }
 }
 
 function updateClientSession(dt) {
@@ -6367,6 +7193,10 @@ function updateHostSnapshots(dt) {
 }
 
 function getHostSnapshotInterval() {
+  if (activeNetworkTransport?.id === "onlineServer") {
+    const onlineRate = ONLINE_TICK_RATE_OPTIONS.includes(onlineTickRate) ? onlineTickRate : DEFAULT_ONLINE_TICK_RATE;
+    return 1 / onlineRate;
+  }
   const rate = SNAPSHOT_RATE_OPTIONS.includes(hostSnapshotRate) ? hostSnapshotRate : DEFAULT_HOST_SNAPSHOT_RATE;
   return 1 / rate;
 }
@@ -6757,10 +7587,15 @@ function updateMousePosition(event) {
 
 function getCanvasPoint(event) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const canvasX = (event.clientX - rect.left) * scaleX;
-  const canvasY = (event.clientY - rect.top) * scaleY;
+  if (!rect.width || !rect.height || !RENDER_SCALE) {
+    return { x: mouse.x || WIDTH / 2, y: mouse.y || HEIGHT / 2 };
+  }
+  const cssX = clamp((event.clientX || 0) - rect.left, 0, rect.width);
+  const cssY = clamp((event.clientY || 0) - rect.top, 0, rect.height);
+  // clientX/clientY are CSS viewport pixels. Convert once into the canvas backing
+  // buffer, then into the logical game space that all UI hitboxes use.
+  const canvasX = cssX * (canvas.width / rect.width);
+  const canvasY = cssY * (canvas.height / rect.height);
   return {
     x: (canvasX - RENDER_OFFSET_X) / RENDER_SCALE,
     y: (canvasY - RENDER_OFFSET_Y) / RENDER_SCALE
@@ -6770,6 +7605,12 @@ function getCanvasPoint(event) {
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   keys.add(key);
+  if (tutorialPopup) {
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "1", "2", "q", "e"].includes(key)) {
+      event.preventDefault();
+    }
+    return;
+  }
   if (gameState === STATE.PLAYING && !coopLevelMenuOpen && gameState !== STATE.OPTIONS) {
     if (key === "1" || key === "q") {
       event.preventDefault();
@@ -6836,7 +7677,15 @@ if (window.visualViewport) {
       resetMobileControls();
     }
   });
+  window.visualViewport.addEventListener("scroll", () => {
+    resizeCanvasToDisplaySize(true);
+  });
 }
+document.addEventListener("fullscreenchange", () => {
+  if (resizeCanvasToDisplaySize(true)) {
+    resetMobileControls();
+  }
+});
 
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 window.addEventListener("touchmove", (event) => event.preventDefault(), { passive: false });

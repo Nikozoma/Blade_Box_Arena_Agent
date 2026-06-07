@@ -29,12 +29,12 @@ async function waitForHealth() {
   throw new Error("Relay health endpoint did not become ready");
 }
 
-function waitForMessage(socket, expectedType) {
+function waitForMessage(socket, expectedType, predicate = () => true) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expectedType}`)), 4000);
     socket.addEventListener("message", function onMessage(event) {
       const message = JSON.parse(String(event.data));
-      if (message.type === expectedType) {
+      if (message.type === expectedType && predicate(message)) {
         clearTimeout(timer);
         socket.removeEventListener("message", onMessage);
         resolve(message);
@@ -62,6 +62,9 @@ async function main() {
     });
     host.send(JSON.stringify({ type: "createRoom", mode: "arena" }));
     const created = await waitForMessage(host, "roomCreated");
+    if (created.lobbyState?.tickRate !== 70) {
+      throw new Error("Relay did not apply default online tick rate");
+    }
 
     const client = new WebSocket(relayUrl);
     await new Promise((resolve, reject) => {
@@ -78,6 +81,18 @@ async function main() {
     const relayedHello = await relayToHost;
     if (relayedHello.message?.type !== "hello") {
       throw new Error("Relay did not forward hello to host");
+    }
+    const lobbyUpdate = waitForMessage(client, "lobbyState", (message) => message.tickRate === 80 && message.roomName === "Smoke Room");
+    host.send(JSON.stringify({ type: "updateLobbySettings", roomCode: created.roomCode, tickRate: 80, roomName: "Smoke Room" }));
+    const updatedLobby = await lobbyUpdate;
+    if (updatedLobby.tickRate !== 80 || updatedLobby.roomName !== "Smoke Room") {
+      throw new Error("Relay did not broadcast lobby settings");
+    }
+    const chatUpdate = waitForMessage(host, "lobbyChat");
+    client.send(JSON.stringify({ type: "chat", roomCode: created.roomCode, text: "hello lobby" }));
+    const chatMessage = await chatUpdate;
+    if (chatMessage.message?.text !== "hello lobby") {
+      throw new Error("Relay did not broadcast lobby chat");
     }
     host.close();
     client.close();
