@@ -3,7 +3,8 @@
 window.BLADE_BOX_ARENA_CONFIG = {
   environment: "development",
   protocolVersion: 1,
+  productionOnlineServerUrl: "",
   onlineServerUrl: "",
-  localDevelopmentServerUrl: "ws://127.0.0.1:8787",
+  localDevelopmentServerUrl: "ws://10.0.0.242:8787",
   useLocalDevelopmentServerWhenEmpty: true
 };

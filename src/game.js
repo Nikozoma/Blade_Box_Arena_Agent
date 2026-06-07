@@ -522,6 +522,7 @@ let hostButton;
 let joinButton;
 let onlineButton;
 let armyVsButton;
+let fullscreenButton;
 let modeButtons = [];
 let shopBackButton;
 let shopPurchaseButtons = [];
@@ -4076,14 +4077,28 @@ function drawMenu() {
     modeButtons.push({ ...button, modeId: mode.id });
   }
 
-  menuButton = drawButton(WIDTH / 2 - 330, 506, 200, 56, "Single Player");
-  hostButton = drawButton(WIDTH / 2 - 100, 506, 200, 56, "Host LAN", !runtimeCapabilities.nativeLanAvailable);
-  joinButton = drawButton(WIDTH / 2 + 130, 506, 200, 56, "Join LAN", !runtimeCapabilities.nativeLanAvailable);
+  hostButton = null;
+  joinButton = null;
+  armyVsButton = null;
+  onlineButton = null;
+  fullscreenButton = null;
+  if (runtimeCapabilities.nativeLanAvailable) {
+    menuButton = drawButton(WIDTH / 2 - 330, 506, 200, 56, "Single Player");
+    hostButton = drawButton(WIDTH / 2 - 100, 506, 200, 56, "Host LAN", false);
+    joinButton = drawButton(WIDTH / 2 + 130, 506, 200, 56, "Join LAN", false);
+  } else {
+    menuButton = drawButton(WIDTH / 2 - 220, 506, 200, 56, "Single Player");
+    onlineButton = drawButton(WIDTH / 2 + 20, 506, 200, 56, "Multiplayer");
+  }
   shopButton = drawButton(WIDTH / 2 - 330, 580, 200, 54, "Shop");
   equipmentButton = drawButton(WIDTH / 2 - 100, 580, 200, 54, "Equipment");
   recordsButton = drawButton(WIDTH / 2 + 130, 580, 200, 54, "Records");
-  armyVsButton = drawButton(WIDTH / 2 - 330, 654, 300, 54, "Host Army VS", !runtimeCapabilities.nativeLanAvailable);
-  onlineButton = drawButton(WIDTH / 2 + 30, 654, 300, 54, "Online Multiplayer");
+  if (runtimeCapabilities.nativeLanAvailable) {
+    armyVsButton = drawButton(WIDTH / 2 - 330, 654, 300, 54, "Host Army VS", false);
+    onlineButton = drawButton(WIDTH / 2 + 30, 654, 300, 54, "Online Multiplayer");
+  } else {
+    fullscreenButton = drawButton(WIDTH / 2 - 150, 654, 300, 54, isBrowserFullscreen() ? "Exit Fullscreen" : "Enter Fullscreen");
+  }
   ctx.fillStyle = "#9aa7b4";
   setCanvasFont("600 13px system-ui, sans-serif");
   const platformLine = runtimeCapabilities.nativeLanAvailable
@@ -4890,6 +4905,12 @@ function handleCanvasClick() {
       openOnlineLobby();
       return;
     }
+
+    if (fullscreenButton && pointInRect(mouse.x, mouse.y, fullscreenButton.x, fullscreenButton.y, fullscreenButton.width, fullscreenButton.height)) {
+      mouse.down = false;
+      toggleBrowserFullscreen();
+      return;
+    }
   }
 
   if (gameState === STATE.HOST_LOBBY) {
@@ -5470,6 +5491,7 @@ function normalizeAppConfig(config = {}) {
   return {
     environment: String(config.environment || "development"),
     protocolVersion: Math.max(1, Math.round(Number(config.protocolVersion) || 1)),
+    productionOnlineServerUrl: String(config.productionOnlineServerUrl || "").trim(),
     onlineServerUrl: String(config.onlineServerUrl || "").trim(),
     localDevelopmentServerUrl: String(config.localDevelopmentServerUrl || "ws://127.0.0.1:8787").trim(),
     useLocalDevelopmentServerWhenEmpty: config.useLocalDevelopmentServerWhenEmpty !== false
@@ -5514,6 +5536,26 @@ function requestAppLikeDisplay() {
   if (runtimeCapabilities.nativeWrapper) return;
   if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
   document.documentElement.requestFullscreen().catch(() => {});
+  if (screen.orientation?.lock) {
+    screen.orientation.lock("landscape").catch(() => {});
+  }
+}
+
+function isBrowserFullscreen() {
+  return Boolean(document.fullscreenElement);
+}
+
+function toggleBrowserFullscreen() {
+  if (runtimeCapabilities.nativeWrapper) return;
+  if (isBrowserFullscreen()) {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+    return;
+  }
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
   if (screen.orientation?.lock) {
     screen.orientation.lock("landscape").catch(() => {});
   }

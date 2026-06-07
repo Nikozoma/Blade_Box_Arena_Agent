@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_VERSION = "blade-box-arena-agent-pwa-v1";
+const CACHE_VERSION = "blade-box-arena-agent-pwa-v2";
 const CORE_CACHE = [
   "/",
   "/index.html",
