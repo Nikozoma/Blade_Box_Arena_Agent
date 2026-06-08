@@ -1,6 +1,6 @@
 {
-  "name": "Blade Box Arena: Agent",
-  "short_name": "BladeBox Agent",
+  "name": "Blade Box Arena",
+  "short_name": "Blade Box",
   "description": "A top-down roguelite arena game with single-player, local co-op, and online room foundations.",
   "id": "/",
   "start_url": "/?source=pwa",

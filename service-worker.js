@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_VERSION = "blade-box-arena-agent-pwa-v2";
+const CACHE_VERSION = "blade-box-arena-pwa-v3";
 const CORE_CACHE = [
   "/",
   "/index.html",
@@ -58,6 +58,7 @@ function shouldSkipCache(requestUrl) {
   return requestUrl.pathname.startsWith("/api/")
     || requestUrl.pathname.startsWith("/health")
     || requestUrl.pathname.startsWith("/rooms")
+    || requestUrl.pathname.startsWith("/ws")
     || requestUrl.pathname.startsWith("/socket");
 }
 

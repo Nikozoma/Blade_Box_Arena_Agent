@@ -88,11 +88,11 @@ The browser build is installable as a PWA on supported browsers.
 
 ## Browser online multiplayer foundation
 
-Browser/PWA multiplayer is prepared for a future always-on relay/server, but public internet multiplayer is not complete until the Sony VAIO server has a real reachable HTTPS/WSS endpoint.
+Browser/PWA multiplayer uses the configured relay endpoint while keeping the Android APK native LAN path separate.
 
-- Future server URL configuration lives in `src/config.js`.
-- Set `onlineServerUrl` to the future VAIO `wss://...` URL when it exists.
-- The current default leaves `onlineServerUrl` empty and uses `localDevelopmentServerUrl: "ws://127.0.0.1:8787"` for local development.
+- Server URL configuration lives in `src/config.js`.
+- Public HTTPS builds at `https://bladeboxarena.ddns.net` use `productionOnlineServerUrl: "wss://bladeboxarena.ddns.net/ws"`.
+- Local development can still use `localDevelopmentServerUrl: "ws://10.0.0.242:8787"`.
 - Browser/PWA clients use **Online Multiplayer**, not native LAN sockets.
 - APK users still keep **Host LAN** and **Join LAN** through the native Android bridge.
 

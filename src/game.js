@@ -6195,7 +6195,11 @@ function detectRuntimeCapabilities() {
 }
 
 function getConfiguredOnlineServerUrl() {
+  if (shouldUseProductionOnlineServerUrl()) return APP_CONFIG.productionOnlineServerUrl;
   if (APP_CONFIG.onlineServerUrl) return APP_CONFIG.onlineServerUrl;
+  if (window.location?.protocol === "https:" && APP_CONFIG.localDevelopmentServerUrl?.startsWith("ws://")) {
+    return "";
+  }
   if (APP_CONFIG.useLocalDevelopmentServerWhenEmpty && APP_CONFIG.localDevelopmentServerUrl) {
     return APP_CONFIG.localDevelopmentServerUrl;
   }
@@ -6203,11 +6207,21 @@ function getConfiguredOnlineServerUrl() {
 }
 
 function getOnlineServerLabel() {
+  if (shouldUseProductionOnlineServerUrl()) return `${APP_CONFIG.productionOnlineServerUrl} (public secure relay)`;
   if (APP_CONFIG.onlineServerUrl) return APP_CONFIG.onlineServerUrl;
+  if (window.location?.protocol === "https:" && APP_CONFIG.localDevelopmentServerUrl?.startsWith("ws://")) {
+    return "Not configured for secure HTTPS page";
+  }
   if (APP_CONFIG.useLocalDevelopmentServerWhenEmpty && APP_CONFIG.localDevelopmentServerUrl) {
     return `${APP_CONFIG.localDevelopmentServerUrl} (local dev fallback)`;
   }
   return "Not configured";
+}
+
+function shouldUseProductionOnlineServerUrl() {
+  if (!APP_CONFIG.productionOnlineServerUrl) return false;
+  const location = window.location;
+  return location?.protocol === "https:" && location.hostname === "bladeboxarena.ddns.net";
 }
 
 function requestAppLikeDisplay() {
