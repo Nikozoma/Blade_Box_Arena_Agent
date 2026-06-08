@@ -4400,14 +4400,14 @@ function getBrowserPwaLayout() {
   const portrait = !runtimeCapabilities.nativeLanAvailable && (window.innerHeight || HEIGHT) >= (window.innerWidth || WIDTH);
   return {
     portrait,
-    titleFont: scaledUiSize(portrait ? 34 : 42, 44),
-    subtitleFont: scaledUiSize(portrait ? 15 : 17, 18),
-    buttonFont: scaledUiSize(portrait ? 16 : 17, 18),
-    smallFont: scaledUiSize(portrait ? 12 : 13, 13),
-    buttonHeight: scaledUiSize(portrait ? 64 : 58, 56),
-    buttonGap: scaledUiSize(portrait ? 12 : 14, 14),
-    top: scaledUiSize(portrait ? 54 : 62, 70),
-    usableWidth: Math.min(WIDTH * 0.86, scaledUiSize(portrait ? 430 : 720, 520))
+    titleFont: scaledUiSize(portrait ? 22 : 26, 20),
+    subtitleFont: scaledUiSize(portrait ? 11 : 12, 10),
+    buttonFont: scaledUiSize(portrait ? 11 : 12, 10),
+    smallFont: scaledUiSize(portrait ? 9 : 10, 8),
+    buttonHeight: scaledUiSize(portrait ? 48 : 46, 42),
+    buttonGap: scaledUiSize(portrait ? 7 : 8, 6),
+    top: scaledUiSize(portrait ? 24 : 26, 22),
+    usableWidth: Math.min(WIDTH * 0.82, scaledUiSize(portrait ? 350 : 620, 300))
   };
 }
 
@@ -4517,7 +4517,7 @@ function drawBrowserPwaMenu() {
   const buttonH = layout.buttonHeight;
   const gap = layout.buttonGap;
   const columnX = centerX - buttonW / 2;
-  const titleY = layout.top + scaledUiSize(32, 32);
+  const titleY = layout.top + scaledUiSize(layout.portrait ? 22 : 24, 20);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4525,15 +4525,15 @@ function drawBrowserPwaMenu() {
   ctx.fillText("Blade Box Arena", centerX, titleY);
   ctx.fillStyle = "#cbd5df";
   setCanvasFont(`600 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
-  ctx.fillText("Browser/PWA build", centerX, titleY + scaledUiSize(34, 34));
+  ctx.fillText("Browser/PWA build", centerX, titleY + scaledUiSize(layout.portrait ? 24 : 26, 22));
 
   const equippedMagic = getEquippedMagicDefinitions().map((magic) => magic.name).join(" / ") || "No Magic";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
-  ctx.fillText(`KP ${permanent.killPoints}   ${getSelectedWeapon().name}`, centerX, titleY + scaledUiSize(66, 66));
+  ctx.fillText(`KP ${permanent.killPoints}   ${getSelectedWeapon().name}`, centerX, titleY + scaledUiSize(layout.portrait ? 46 : 50, 42));
   ctx.fillStyle = "#cbd5df";
   setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
-  ctx.fillText(`Magic: ${truncateText(equippedMagic, 44)}`, centerX, titleY + scaledUiSize(92, 92));
+  ctx.fillText(`Magic: ${truncateText(equippedMagic, 44)}`, centerX, titleY + scaledUiSize(layout.portrait ? 64 : 70, 58));
 
   modeButtons = [];
   hostButton = null;
@@ -4542,11 +4542,11 @@ function drawBrowserPwaMenu() {
   onlineButton = null;
   fullscreenButton = null;
 
-  let y = titleY + scaledUiSize(126, 126);
+  let y = titleY + scaledUiSize(layout.portrait ? 92 : 104, 82);
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
   ctx.fillText("Game Mode", centerX, y);
-  y += scaledUiSize(20, 20);
+  y += scaledUiSize(layout.portrait ? 13 : 15, 12);
 
   const playableModes = GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS);
   if (layout.portrait) {
@@ -4566,29 +4566,33 @@ function drawBrowserPwaMenu() {
     y += buttonH + gap;
   }
 
-  menuButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Single Player", false, layout.buttonFont);
-  y += buttonH + gap;
-  onlineButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Multiplayer", false, layout.buttonFont);
-  y += buttonH + gap;
-
   const secondaryGap = scaledUiSize(12, 12);
-  const secondaryW = layout.portrait ? buttonW : (buttonW - secondaryGap * 2) / 3;
   if (layout.portrait) {
+    menuButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Single Player", false, layout.buttonFont);
+    y += buttonH + gap;
+    onlineButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Multiplayer", false, layout.buttonFont);
+    y += buttonH + gap;
     shopButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Shop", false, layout.buttonFont);
     y += buttonH + gap;
     equipmentButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Equipment", false, layout.buttonFont);
     y += buttonH + gap;
     recordsButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Records", false, layout.buttonFont);
     y += buttonH + gap;
+    fullscreenButton = drawButtonWithFont(columnX, y, buttonW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Enter Fullscreen", false, layout.buttonFont);
+    y += buttonH + gap;
   } else {
+    const primaryGap = scaledUiSize(12, 12);
+    const primaryW = (buttonW - primaryGap * 2) / 3;
+    menuButton = drawButtonWithFont(columnX, y, primaryW, buttonH, "Single Player", false, layout.buttonFont);
+    onlineButton = drawButtonWithFont(columnX + primaryW + primaryGap, y, primaryW, buttonH, "Multiplayer", false, layout.buttonFont);
+    fullscreenButton = drawButtonWithFont(columnX + (primaryW + primaryGap) * 2, y, primaryW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Fullscreen", false, layout.buttonFont);
+    y += buttonH + gap;
+    const secondaryW = (buttonW - secondaryGap * 2) / 3;
     shopButton = drawButtonWithFont(columnX, y, secondaryW, buttonH, "Shop", false, layout.buttonFont);
     equipmentButton = drawButtonWithFont(columnX + secondaryW + secondaryGap, y, secondaryW, buttonH, "Equipment", false, layout.buttonFont);
     recordsButton = drawButtonWithFont(columnX + (secondaryW + secondaryGap) * 2, y, secondaryW, buttonH, "Records", false, layout.buttonFont);
     y += buttonH + gap;
   }
-
-  fullscreenButton = drawButtonWithFont(columnX, y, buttonW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Enter Fullscreen", false, layout.buttonFont);
-  y += buttonH + gap;
 
   ctx.fillStyle = "#9aa7b4";
   setCanvasFont(`600 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
