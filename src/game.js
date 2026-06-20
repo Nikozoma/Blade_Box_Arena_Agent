@@ -3,6 +3,10 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const orientationGate = document.getElementById("orientationGate");
+const orientationGateTitle = document.getElementById("orientationGateTitle");
+const orientationGateBody = document.getElementById("orientationGateBody");
+const orientationGateHelp = document.getElementById("orientationGateHelp");
+const orientationGateButton = document.getElementById("orientationGateButton");
 const textInputOverlay = document.getElementById("textInputOverlay");
 const textInputForm = document.getElementById("textInputForm");
 const textInputLabel = document.getElementById("textInputLabel");
@@ -546,6 +550,7 @@ let joinButton;
 let onlineButton;
 let armyVsButton;
 let fullscreenButton;
+let browserExitButton;
 let modeButtons = [];
 let shopBackButton;
 let shopPurchaseButtons = [];
@@ -591,6 +596,7 @@ let onlineFullscreenHint = "";
 let browserOrientationGateActive = false;
 let textInputState = null;
 let fullscreenRetryPending = false;
+let browserFullscreenSuspended = false;
 let activeMenuScroll = null;
 let currentScrollableMenu = null;
 let menuScrollDrag = null;
@@ -872,7 +878,7 @@ function getSpawnPosition(size, index) {
 }
 
 function update(dt) {
-  if (isBrowserOrientationGateActive() && sessionMode === SESSION.SINGLE) return;
+  if ((isBrowserOrientationGateActive() || browserFullscreenSuspended) && sessionMode === SESSION.SINGLE) return;
   if (gameState === STATE.OPTIONS) return;
 
   updateEffects(dt);
@@ -3119,6 +3125,7 @@ function hasNeighborFloor(grid, col, row) {
 function draw() {
   resizeCanvasToDisplaySize();
   currentScrollableMenu = null;
+  browserExitButton = null;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -3128,6 +3135,7 @@ function draw() {
   if (gameState === STATE.MENU) {
     drawMenu();
     drawSettingsButton();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3136,42 +3144,49 @@ function draw() {
     drawMenu();
     drawOptionsMenu();
     drawTutorialPopup();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.HOST_LOBBY) {
     drawHostLobby();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.JOIN_LOBBY) {
     drawJoinLobby();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.ONLINE_LOBBY) {
     drawOnlineLobby();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.SHOP) {
     drawShop();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.EQUIPMENT) {
     drawEquipment();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.RECORDS) {
     drawRecords();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3180,6 +3195,7 @@ function draw() {
     drawMenu();
     drawOptionsMenu();
     drawTutorialPopup();
+    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3218,10 +3234,12 @@ function draw() {
 
   if (gameState === STATE.OPTIONS) {
     drawOptionsMenu();
+    drawBrowserExitButton();
   } else if (coopLevelMenuOpen) {
     drawLevelUp();
   } else if (gameState === STATE.PLAYING) {
     drawSettingsButton();
+    drawBrowserExitButton();
     drawMagicButtons();
     drawMobileControls();
   }
@@ -3913,6 +3931,30 @@ function drawSettingsButton() {
   ctx.fillText("⚙", x + size / 2, y + size / 2 + 1);
   ctx.textBaseline = "alphabetic";
   drawGearGlyph(x + size / 2, y + size / 2, size * 0.28);
+  ctx.restore();
+}
+
+function drawBrowserExitButton() {
+  if (!runtimeCapabilities.browser || runtimeCapabilities.nativeWrapper || !isBrowserPhoneViewport() || browserFullscreenSuspended) return;
+  const width = scaledUiSize(92, 82);
+  const height = scaledUiSize(42, 38);
+  const x = scaledUiSize(18, 14);
+  const y = scaledUiSize(18, 14);
+  const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
+  browserExitButton = { x, y, width, height };
+
+  ctx.save();
+  ctx.fillStyle = hovered ? "#ff6b8f" : "#ef476f";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "#f4f6f8";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont(`900 ${Math.round(scaledUiSize(15, 14))}px system-ui, sans-serif`);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("EXIT", x + width / 2, y + height / 2);
+  ctx.textBaseline = "alphabetic";
   ctx.restore();
 }
 
@@ -5562,6 +5604,7 @@ function isMenuScrollInputEnabled() {
   return !tutorialPopup
     && !textInputState
     && !isBrowserOrientationGateActive()
+    && !browserFullscreenSuspended
     && !coopLevelMenuOpen
     && gameState !== STATE.PLAYING
     && gameState !== STATE.OPTIONS
@@ -5617,7 +5660,7 @@ function endMenuScrollDrag(event) {
 }
 
 function handleMenuWheel(event) {
-  if (textInputState || isBrowserOrientationGateActive()) return;
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) return;
   updateMousePosition(event);
   if (!isMenuScrollInputEnabled() || !isPointInMenuScrollViewport(mouse.x, mouse.y)) return;
   const modeMultiplier = event.deltaMode === 1
@@ -5632,7 +5675,7 @@ function handleMenuWheel(event) {
 }
 
 function handleCanvasClick() {
-  if (textInputState || isBrowserOrientationGateActive()) {
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
     mouse.down = false;
     return;
   }
@@ -5640,6 +5683,12 @@ function handleCanvasClick() {
   if (menuScrollSuppressClick) {
     menuScrollSuppressClick = false;
     mouse.down = false;
+    return;
+  }
+
+  if (browserExitButton && pointInRect(mouse.x, mouse.y, browserExitButton.x, browserExitButton.y, browserExitButton.width, browserExitButton.height)) {
+    mouse.down = false;
+    suspendBrowserFullscreenFlow();
     return;
   }
 
@@ -5989,7 +6038,7 @@ function handlePointerDown(event) {
   updateMousePosition(event);
   retryBrowserFullscreenFromGesture();
 
-  if (textInputState || isBrowserOrientationGateActive()) {
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
     mouse.down = false;
     return;
   }
@@ -6056,7 +6105,7 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!isTouchPointer(event)) return;
-  if (textInputState || isBrowserOrientationGateActive()) return;
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) return;
   if (updateMenuScrollDrag(event)) {
     event.preventDefault();
     return;
@@ -6085,7 +6134,7 @@ function handlePointerEnd(event) {
   if (!isTouchPointer(event)) return;
   event.preventDefault();
 
-  if (textInputState || isBrowserOrientationGateActive()) {
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
     mouse.down = false;
     return;
   }
@@ -6496,6 +6545,7 @@ function isBrowserOrientationGateActive() {
 function shouldAttemptBrowserFullscreen() {
   return runtimeCapabilities.browser
     && !runtimeCapabilities.nativeWrapper
+    && !browserFullscreenSuspended
     && isBrowserPhoneViewport()
     && !isBrowserPhonePortrait()
     && !document.fullscreenElement;
@@ -6548,13 +6598,77 @@ function exitBrowserFullscreenIfSafe() {
   document.exitFullscreen().catch(() => {});
 }
 
+function unlockBrowserOrientationIfSafe() {
+  try {
+    screen.orientation?.unlock?.();
+  } catch (error) {
+    // Orientation unlock is best-effort and not supported everywhere.
+  }
+}
+
+function setOrientationGateContent(title, body, help, buttonLabel) {
+  if (orientationGateTitle) orientationGateTitle.textContent = title;
+  if (orientationGateBody) orientationGateBody.textContent = body;
+  if (orientationGateHelp) orientationGateHelp.textContent = help;
+  if (orientationGateButton) orientationGateButton.textContent = buttonLabel;
+}
+
+function suspendBrowserFullscreenFlow() {
+  if (runtimeCapabilities.nativeWrapper) return;
+  browserFullscreenSuspended = true;
+  fullscreenRetryPending = false;
+  resetMobileControls();
+  mouse.down = false;
+  activeOptionsSlider = null;
+  menuScrollDrag = null;
+  if (textInputState) closeTextInputOverlay(false);
+  unlockBrowserOrientationIfSafe();
+  exitBrowserFullscreenIfSafe();
+  updateBrowserOrientationGate();
+}
+
+function resumeBrowserFullscreenFlow() {
+  if (runtimeCapabilities.nativeWrapper) return;
+  if (isBrowserPhonePortrait()) {
+    setOrientationGateContent(
+      "Turn Phone Sideways",
+      "Turn your phone sideways to play Blade Box Arena.",
+      "Resume is available after rotating back to landscape.",
+      "Resume Game"
+    );
+    return;
+  }
+  browserFullscreenSuspended = false;
+  fullscreenRetryPending = true;
+  updateBrowserOrientationGate();
+  requestAppLikeDisplay();
+}
+
 function updateBrowserOrientationGate() {
   const shouldGate = isBrowserPhonePortrait();
+  const shouldShowGate = shouldGate || (browserFullscreenSuspended && isBrowserPhoneViewport());
   browserOrientationGateActive = shouldGate;
-  if (orientationGate) orientationGate.hidden = !shouldGate;
-  document.body.classList.toggle("orientation-gated", shouldGate);
+  if (orientationGate) orientationGate.hidden = !shouldShowGate;
+  document.body.classList.toggle("orientation-gated", shouldShowGate);
+  document.body.classList.toggle("fullscreen-suspended", browserFullscreenSuspended);
+
+  if (browserFullscreenSuspended && shouldShowGate) {
+    setOrientationGateContent(
+      "Game Paused",
+      "Fullscreen is off so browser controls can work normally.",
+      shouldGate ? "Turn phone sideways and tap Resume Game when you want to return." : "Use browser/app controls to leave, or tap Resume Game to re-enter fullscreen.",
+      "Resume Game"
+    );
+    return;
+  }
 
   if (shouldGate) {
+    setOrientationGateContent(
+      "Turn Phone Sideways",
+      "Turn your phone sideways to play Blade Box Arena.",
+      "Need to leave the game? Hold your phone upright and tap Exit.",
+      "Exit"
+    );
     resetMobileControls();
     mouse.down = false;
     activeOptionsSlider = null;
@@ -6565,13 +6679,13 @@ function updateBrowserOrientationGate() {
     return;
   }
 
-  if (isBrowserPhoneViewport()) {
+  if (isBrowserPhoneViewport() && !browserFullscreenSuspended) {
     requestAppLikeDisplay();
   }
 }
 
 function retryBrowserFullscreenFromGesture() {
-  if (textInputState || isBrowserOrientationGateActive()) return;
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) return;
   if (shouldAttemptBrowserFullscreen() || fullscreenRetryPending) {
     requestAppLikeDisplay();
   }
@@ -8011,8 +8125,8 @@ function getCanvasPoint(event) {
 }
 
 window.addEventListener("keydown", (event) => {
-  if (textInputState || isBrowserOrientationGateActive()) {
-    if (isBrowserOrientationGateActive()) event.preventDefault();
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
+    if (isBrowserOrientationGateActive() || browserFullscreenSuspended) event.preventDefault();
     return;
   }
   const key = event.key.toLowerCase();
@@ -8048,7 +8162,7 @@ canvas.addEventListener("mousemove", updateMousePosition);
 canvas.addEventListener("mousedown", (event) => {
   updateMousePosition(event);
   retryBrowserFullscreenFromGesture();
-  if (textInputState || isBrowserOrientationGateActive()) {
+  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
     mouse.down = false;
     return;
   }
@@ -8090,6 +8204,15 @@ if (textInputField) {
       cancelTextInputOverlay();
     }
     event.stopPropagation();
+  });
+}
+if (orientationGateButton) {
+  orientationGateButton.addEventListener("click", () => {
+    if (browserFullscreenSuspended) {
+      resumeBrowserFullscreenFlow();
+    } else {
+      suspendBrowserFullscreenFlow();
+    }
   });
 }
 
