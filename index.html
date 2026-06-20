@@ -18,6 +18,21 @@
     <main class="shell">
       <canvas id="gameCanvas" aria-label="Blade Box Arena game canvas"></canvas>
     </main>
+    <section id="orientationGate" class="orientation-gate" aria-live="polite" hidden>
+      <div class="orientation-gate__panel">
+        <h1>Turn your phone sideways to play Blade Box Arena.</h1>
+      </div>
+    </section>
+    <section id="textInputOverlay" class="text-input-overlay" aria-modal="true" role="dialog" hidden>
+      <form id="textInputForm" class="text-input-panel">
+        <label id="textInputLabel" for="textInputField">Enter text</label>
+        <input id="textInputField" type="text" autocomplete="off" autocapitalize="sentences" spellcheck="false">
+        <div class="text-input-actions">
+          <button id="textInputCancel" type="button">Cancel</button>
+          <button id="textInputSubmit" type="submit">OK</button>
+        </div>
+      </form>
+    </section>
     <script src="src/config.js"></script>
     <script src="src/pwa.js"></script>
     <script src="src/game.js"></script>

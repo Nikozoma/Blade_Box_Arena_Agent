@@ -61,3 +61,85 @@ canvas {
   user-select: none;
   -webkit-user-select: none;
 }
+
+body.orientation-gated .shell {
+  visibility: hidden;
+}
+
+.orientation-gate,
+.text-input-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding:
+    max(18px, env(safe-area-inset-top))
+    max(18px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom))
+    max(18px, env(safe-area-inset-left));
+  background: #080b10;
+  color: #f4f6f8;
+  text-align: center;
+}
+
+.orientation-gate[hidden],
+.text-input-overlay[hidden] {
+  display: none;
+}
+
+.orientation-gate__panel {
+  width: min(520px, 100%);
+}
+
+.orientation-gate h1 {
+  margin: 0;
+  font-size: clamp(28px, 7vw, 46px);
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.text-input-overlay {
+  z-index: 30;
+  background: rgb(8 11 16 / 0.9);
+}
+
+.text-input-panel {
+  width: min(480px, calc(100vw - 36px));
+  border: 2px solid #75d7ff;
+  background: #202832;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  text-align: left;
+}
+
+.text-input-panel label {
+  color: #f4f6f8;
+  font: 800 18px/1.25 ui-sans-serif, system-ui, sans-serif;
+}
+
+.text-input-panel input {
+  width: 100%;
+  min-height: 48px;
+  border: 2px solid #5d6e7e;
+  background: #111418;
+  color: #f4f6f8;
+  padding: 10px 12px;
+  font: 700 17px/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+
+.text-input-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.text-input-actions button {
+  min-width: 104px;
+  min-height: 44px;
+  border: 2px solid #111418;
+  background: #dbe4ec;
+  color: #111418;
+  font: 800 15px/1 ui-sans-serif, system-ui, sans-serif;
+}

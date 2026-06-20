@@ -2,6 +2,13 @@
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
+const orientationGate = document.getElementById("orientationGate");
+const textInputOverlay = document.getElementById("textInputOverlay");
+const textInputForm = document.getElementById("textInputForm");
+const textInputLabel = document.getElementById("textInputLabel");
+const textInputField = document.getElementById("textInputField");
+const textInputCancel = document.getElementById("textInputCancel");
+const textInputSubmit = document.getElementById("textInputSubmit");
 ctx.imageSmoothingEnabled = false;
 
 const DESIGN_WIDTH = 1280;
@@ -264,6 +271,7 @@ const DEFAULT_ONLINE_TICK_RATE = 70;
 const ONLINE_CHAT_MAX_MESSAGES = 40;
 const ONLINE_CHAT_MAX_LENGTH = 140;
 const IPHONE_FULLSCREEN_HINT = "For app-style fullscreen on iPhone, add the game to your Home Screen from Safari.";
+const PHONE_VIEWPORT_MAX_SHORT_SIDE = 700;
 const TUTORIAL_KEYS = {
   BASIC: "basicControls",
   MAGIC: "magicControls",
@@ -580,6 +588,9 @@ let onlineTickRate = DEFAULT_ONLINE_TICK_RATE;
 let onlineRoomName = "";
 let onlineConnectionOptionsOpen = false;
 let onlineFullscreenHint = "";
+let browserOrientationGateActive = false;
+let textInputState = null;
+let fullscreenRetryPending = false;
 let activeMenuScroll = null;
 let currentScrollableMenu = null;
 let menuScrollDrag = null;
@@ -861,6 +872,7 @@ function getSpawnPosition(size, index) {
 }
 
 function update(dt) {
+  if (isBrowserOrientationGateActive() && sessionMode === SESSION.SINGLE) return;
   if (gameState === STATE.OPTIONS) return;
 
   updateEffects(dt);
@@ -4507,10 +4519,10 @@ function getBrowserPwaMenuContentHeight(layout) {
   y += scaledUiSize(layout.portrait ? 13 : 15, 12);
   if (layout.portrait) {
     y += GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS).length * (buttonH + gap);
-    y += 6 * (buttonH + gap);
+    y += 5 * (buttonH + gap);
   } else {
     y += buttonH + gap;
-    y += (buttonH + gap) * 2;
+    y += buttonH + gap;
   }
   return y + scaledUiSize(onlineFullscreenHint ? 72 : 42, 42);
 }
@@ -4687,14 +4699,11 @@ function drawBrowserPwaMenu() {
     y += buttonH + gap;
     recordsButton = drawButtonWithFont(columnX, y, buttonW, buttonH, "Records", false, layout.buttonFont);
     y += buttonH + gap;
-    fullscreenButton = drawButtonWithFont(columnX, y, buttonW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Enter Fullscreen", false, layout.buttonFont);
-    y += buttonH + gap;
   } else {
     const primaryGap = scaledUiSize(12, 12);
-    const primaryW = (buttonW - primaryGap * 2) / 3;
+    const primaryW = (buttonW - primaryGap) / 2;
     menuButton = drawButtonWithFont(columnX, y, primaryW, buttonH, "Single Player", false, layout.buttonFont);
     onlineButton = drawButtonWithFont(columnX + primaryW + primaryGap, y, primaryW, buttonH, "Multiplayer", false, layout.buttonFont);
-    fullscreenButton = drawButtonWithFont(columnX + (primaryW + primaryGap) * 2, y, primaryW, buttonH, isBrowserFullscreen() ? "Exit Fullscreen" : "Fullscreen", false, layout.buttonFont);
     y += buttonH + gap;
     const secondaryW = (buttonW - secondaryGap * 2) / 3;
     shopButton = drawButtonWithFont(columnX, y, secondaryW, buttonH, "Shop", false, layout.buttonFont);
@@ -5551,6 +5560,8 @@ function gameLoop(time) {
 
 function isMenuScrollInputEnabled() {
   return !tutorialPopup
+    && !textInputState
+    && !isBrowserOrientationGateActive()
     && !coopLevelMenuOpen
     && gameState !== STATE.PLAYING
     && gameState !== STATE.OPTIONS
@@ -5606,6 +5617,7 @@ function endMenuScrollDrag(event) {
 }
 
 function handleMenuWheel(event) {
+  if (textInputState || isBrowserOrientationGateActive()) return;
   updateMousePosition(event);
   if (!isMenuScrollInputEnabled() || !isPointInMenuScrollViewport(mouse.x, mouse.y)) return;
   const modeMultiplier = event.deltaMode === 1
@@ -5620,6 +5632,11 @@ function handleMenuWheel(event) {
 }
 
 function handleCanvasClick() {
+  if (textInputState || isBrowserOrientationGateActive()) {
+    mouse.down = false;
+    return;
+  }
+
   if (menuScrollSuppressClick) {
     menuScrollSuppressClick = false;
     mouse.down = false;
@@ -5970,6 +5987,12 @@ function handlePointerDown(event) {
   touchInputSeen = true;
   event.preventDefault();
   updateMousePosition(event);
+  retryBrowserFullscreenFromGesture();
+
+  if (textInputState || isBrowserOrientationGateActive()) {
+    mouse.down = false;
+    return;
+  }
 
   if (beginMenuScrollDrag(event)) return;
 
@@ -6033,6 +6056,7 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!isTouchPointer(event)) return;
+  if (textInputState || isBrowserOrientationGateActive()) return;
   if (updateMenuScrollDrag(event)) {
     event.preventDefault();
     return;
@@ -6060,6 +6084,11 @@ function handlePointerMove(event) {
 function handlePointerEnd(event) {
   if (!isTouchPointer(event)) return;
   event.preventDefault();
+
+  if (textInputState || isBrowserOrientationGateActive()) {
+    mouse.down = false;
+    return;
+  }
 
   if (endMenuScrollDrag(event)) return;
 
@@ -6439,15 +6468,50 @@ function shouldUseProductionOnlineServerUrl() {
   return location?.protocol === "https:" && location.hostname === "bladeboxarena.ddns.net";
 }
 
+function getViewportOrientationSize() {
+  const viewport = window.visualViewport;
+  return {
+    width: viewport?.width || window.innerWidth || WIDTH,
+    height: viewport?.height || window.innerHeight || HEIGHT
+  };
+}
+
+function isBrowserPhoneViewport() {
+  if (!runtimeCapabilities.browser || runtimeCapabilities.nativeWrapper) return false;
+  const size = getViewportOrientationSize();
+  const shortSide = Math.min(size.width, size.height);
+  const coarsePointer = Boolean(window.matchMedia?.("(pointer: coarse)")?.matches);
+  return shortSide <= PHONE_VIEWPORT_MAX_SHORT_SIDE && (coarsePointer || navigator.maxTouchPoints > 0);
+}
+
+function isBrowserPhonePortrait() {
+  const size = getViewportOrientationSize();
+  return isBrowserPhoneViewport() && size.height > size.width;
+}
+
+function isBrowserOrientationGateActive() {
+  return browserOrientationGateActive;
+}
+
+function shouldAttemptBrowserFullscreen() {
+  return runtimeCapabilities.browser
+    && !runtimeCapabilities.nativeWrapper
+    && isBrowserPhoneViewport()
+    && !isBrowserPhonePortrait()
+    && !document.fullscreenElement;
+}
+
 function requestAppLikeDisplay() {
-  if (runtimeCapabilities.nativeWrapper) return;
-  if (document.fullscreenElement) return;
+  if (!shouldAttemptBrowserFullscreen()) return;
   if (!document.documentElement.requestFullscreen) {
     onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+    fullscreenRetryPending = false;
     return;
   }
+  fullscreenRetryPending = true;
   document.documentElement.requestFullscreen().catch(() => {
     onlineFullscreenHint = IPHONE_FULLSCREEN_HINT;
+    fullscreenRetryPending = true;
   });
   if (screen.orientation?.lock) {
     screen.orientation.lock("landscape").catch(() => {});
@@ -6476,6 +6540,40 @@ function toggleBrowserFullscreen() {
   }
   if (screen.orientation?.lock) {
     screen.orientation.lock("landscape").catch(() => {});
+  }
+}
+
+function exitBrowserFullscreenIfSafe() {
+  if (runtimeCapabilities.nativeWrapper || !document.fullscreenElement || !document.exitFullscreen) return;
+  document.exitFullscreen().catch(() => {});
+}
+
+function updateBrowserOrientationGate() {
+  const shouldGate = isBrowserPhonePortrait();
+  browserOrientationGateActive = shouldGate;
+  if (orientationGate) orientationGate.hidden = !shouldGate;
+  document.body.classList.toggle("orientation-gated", shouldGate);
+
+  if (shouldGate) {
+    resetMobileControls();
+    mouse.down = false;
+    activeOptionsSlider = null;
+    menuScrollDrag = null;
+    if (textInputState) closeTextInputOverlay(false);
+    fullscreenRetryPending = false;
+    exitBrowserFullscreenIfSafe();
+    return;
+  }
+
+  if (isBrowserPhoneViewport()) {
+    requestAppLikeDisplay();
+  }
+}
+
+function retryBrowserFullscreenFromGesture() {
+  if (textInputState || isBrowserOrientationGateActive()) return;
+  if (shouldAttemptBrowserFullscreen() || fullscreenRetryPending) {
+    requestAppLikeDisplay();
   }
 }
 
@@ -6894,11 +6992,70 @@ function openOnlineLobby() {
     : "Online server URL is not configured.";
 }
 
-function promptForOnlineRoomCode() {
-  const entered = window.prompt("Enter online room code", onlineRoomCode || "");
-  if (entered === null) return;
-  onlineRoomCode = entered.trim().toUpperCase();
-  onlineStatus = onlineRoomCode ? `Room code set to ${onlineRoomCode}` : "Room code cleared.";
+function openTextInputOverlay(options) {
+  if (!textInputOverlay || !textInputForm || !textInputLabel || !textInputField || !textInputSubmit) return false;
+  textInputState = {
+    onSubmit: options.onSubmit,
+    onCancel: options.onCancel || null
+  };
+  textInputLabel.textContent = options.label || "Enter text";
+  textInputField.value = options.value || "";
+  textInputField.maxLength = Math.max(1, Math.round(Number(options.maxLength) || 120));
+  textInputField.placeholder = options.placeholder || "";
+  textInputSubmit.textContent = options.submitLabel || "OK";
+  textInputOverlay.hidden = false;
+  resetMobileControls();
+  mouse.down = false;
+  window.setTimeout(() => {
+    textInputField.focus({ preventScroll: true });
+    textInputField.select();
+  }, 0);
+  return true;
+}
+
+function closeTextInputOverlay(shouldRecoverFullscreen = true) {
+  if (textInputOverlay) textInputOverlay.hidden = true;
+  if (textInputField) textInputField.blur();
+  textInputState = null;
+  mouse.down = false;
+  if (shouldRecoverFullscreen) {
+    window.setTimeout(() => {
+      updateBrowserOrientationGate();
+      retryBrowserFullscreenFromGesture();
+    }, 0);
+  }
+}
+
+function submitTextInputOverlay() {
+  if (!textInputState || !textInputField) return;
+  const value = textInputField.value;
+  const onSubmit = textInputState.onSubmit;
+  closeTextInputOverlay(true);
+  if (onSubmit) onSubmit(value);
+}
+
+function cancelTextInputOverlay() {
+  const onCancel = textInputState?.onCancel;
+  closeTextInputOverlay(true);
+  if (onCancel) onCancel();
+}
+
+function promptForOnlineRoomCode(afterSubmit = null) {
+  const opened = openTextInputOverlay({
+    label: "Online room code",
+    value: onlineRoomCode || "",
+    maxLength: 12,
+    placeholder: "Room code",
+    submitLabel: "Set",
+    onSubmit: (entered) => {
+      onlineRoomCode = String(entered || "").trim().toUpperCase();
+      onlineStatus = onlineRoomCode ? `Room code set to ${onlineRoomCode}` : "Room code cleared.";
+      if (onlineRoomCode && afterSubmit) afterSubmit();
+    }
+  });
+  if (!opened) {
+    onlineStatus = "Room code input unavailable.";
+  }
 }
 
 function getOnlineLobbyDisplayPlayers() {
@@ -6954,19 +7111,39 @@ function sendOnlineLobbySettings() {
 
 function promptOnlineRoomName() {
   if (sessionMode !== SESSION.HOST) return;
-  const entered = window.prompt("Optional room name", onlineRoomName || "");
-  if (entered === null) return;
-  onlineRoomName = entered.trim().slice(0, 40);
-  sendOnlineLobbySettings();
+  const opened = openTextInputOverlay({
+    label: "Room name",
+    value: onlineRoomName || "",
+    maxLength: 40,
+    placeholder: "Optional room name",
+    submitLabel: "Save",
+    onSubmit: (entered) => {
+      onlineRoomName = String(entered || "").trim().slice(0, 40);
+      sendOnlineLobbySettings();
+    }
+  });
+  if (!opened) {
+    onlineStatus = "Room name input unavailable.";
+  }
 }
 
 function promptAndSendOnlineChat() {
   if (!onlineServerTransport.connected || !onlineRoomCode) return;
-  const entered = window.prompt("Lobby chat message", "");
-  if (entered === null) return;
-  const text = sanitizeOnlineChatText(entered);
-  if (!text) return;
-  onlineServerTransport.sendRaw({ type: "chat", roomCode: onlineRoomCode, text });
+  const opened = openTextInputOverlay({
+    label: "Lobby chat message",
+    value: "",
+    maxLength: ONLINE_CHAT_MAX_LENGTH,
+    placeholder: "Message",
+    submitLabel: "Send",
+    onSubmit: (entered) => {
+      const text = sanitizeOnlineChatText(entered);
+      if (!text) return;
+      onlineServerTransport.sendRaw({ type: "chat", roomCode: onlineRoomCode, text });
+    }
+  });
+  if (!opened) {
+    onlineStatus = "Chat input unavailable.";
+  }
 }
 
 function sanitizeOnlineChatText(text) {
@@ -7007,8 +7184,10 @@ async function createOnlineRoom() {
 
 async function joinOnlineRoom() {
   if (!onlineRoomCode) {
-    promptForOnlineRoomCode();
-    if (!onlineRoomCode) return;
+    promptForOnlineRoomCode(() => {
+      joinOnlineRoom();
+    });
+    return;
   }
   activeNetworkTransport = onlineServerTransport;
   sessionMode = SESSION.CLIENT;
@@ -7832,6 +8011,10 @@ function getCanvasPoint(event) {
 }
 
 window.addEventListener("keydown", (event) => {
+  if (textInputState || isBrowserOrientationGateActive()) {
+    if (isBrowserOrientationGateActive()) event.preventDefault();
+    return;
+  }
   const key = event.key.toLowerCase();
   keys.add(key);
   if (tutorialPopup) {
@@ -7864,6 +8047,11 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", updateMousePosition);
 canvas.addEventListener("mousedown", (event) => {
   updateMousePosition(event);
+  retryBrowserFullscreenFromGesture();
+  if (textInputState || isBrowserOrientationGateActive()) {
+    mouse.down = false;
+    return;
+  }
   mouse.down = true;
   handleCanvasClick();
 });
@@ -7874,6 +8062,37 @@ canvas.addEventListener("pointerup", handlePointerEnd);
 canvas.addEventListener("pointercancel", handlePointerEnd);
 canvas.addEventListener("lostpointercapture", handleLostPointerCapture);
 
+document.addEventListener("pointerdown", () => {
+  retryBrowserFullscreenFromGesture();
+}, { capture: true });
+
+if (textInputForm) {
+  textInputForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitTextInputOverlay();
+  });
+}
+if (textInputCancel) {
+  textInputCancel.addEventListener("click", () => {
+    cancelTextInputOverlay();
+  });
+}
+if (textInputOverlay) {
+  textInputOverlay.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    if (event.target === textInputOverlay) cancelTextInputOverlay();
+  });
+}
+if (textInputField) {
+  textInputField.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelTextInputOverlay();
+    }
+    event.stopPropagation();
+  });
+}
+
 window.addEventListener("mouseup", () => {
   mouse.down = false;
   activeOptionsSlider = null;
@@ -7882,6 +8101,7 @@ window.addEventListener("load", () => {
   if (resizeCanvasToDisplaySize(true)) {
     resetMobileControls();
   }
+  updateBrowserOrientationGate();
 });
 window.addEventListener("online", () => {
   runtimeCapabilities.onlineNow = true;
@@ -7895,26 +8115,31 @@ window.addEventListener("resize", () => {
   if (resizeCanvasToDisplaySize()) {
     resetMobileControls();
   }
+  updateBrowserOrientationGate();
 });
 window.addEventListener("orientationchange", () => {
   if (resizeCanvasToDisplaySize()) {
     resetMobileControls();
   }
+  window.setTimeout(updateBrowserOrientationGate, 60);
 });
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", () => {
     if (resizeCanvasToDisplaySize()) {
       resetMobileControls();
     }
+    updateBrowserOrientationGate();
   });
   window.visualViewport.addEventListener("scroll", () => {
     resizeCanvasToDisplaySize(true);
   });
 }
 document.addEventListener("fullscreenchange", () => {
+  fullscreenRetryPending = !document.fullscreenElement && shouldAttemptBrowserFullscreen();
   if (resizeCanvasToDisplaySize(true)) {
     resetMobileControls();
   }
+  updateBrowserOrientationGate();
 });
 
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -7951,5 +8176,6 @@ function lerp(a, b, t) {
 }
 
 setupNetworkListeners();
+updateBrowserOrientationGate();
 draw();
 requestAnimationFrame(gameLoop);
