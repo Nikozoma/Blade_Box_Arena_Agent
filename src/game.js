@@ -488,6 +488,8 @@ const mouse = {
 };
 const MOBILE_JOYSTICK_MAX_RADIUS = 37;
 const MOBILE_JOYSTICK_DEAD_ZONE = 16;
+const MENU_SCROLL_DRAG_THRESHOLD = 10;
+const MENU_SCROLLBAR_MIN_THUMB = 34;
 const MOBILE_DEBUG_OVERLAY = typeof window !== "undefined"
   && window.location
   && typeof URLSearchParams !== "undefined"
@@ -578,6 +580,11 @@ let onlineTickRate = DEFAULT_ONLINE_TICK_RATE;
 let onlineRoomName = "";
 let onlineConnectionOptionsOpen = false;
 let onlineFullscreenHint = "";
+let activeMenuScroll = null;
+let currentScrollableMenu = null;
+let menuScrollDrag = null;
+let menuScrollSuppressClick = false;
+const menuScrollStates = new Map();
 let onlineLobbyState = {
   roomCode: "",
   mode: GAME_MODE.ARENA,
@@ -3099,6 +3106,7 @@ function hasNeighborFloor(grid, col, row) {
 
 function draw() {
   resizeCanvasToDisplaySize();
+  currentScrollableMenu = null;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -4396,6 +4404,86 @@ function scaledUiSize(cssPixels, minLogical = 0) {
   return Math.max(minLogical, cssToLogical(cssPixels));
 }
 
+function getMenuScrollState(key) {
+  if (!menuScrollStates.has(key)) {
+    menuScrollStates.set(key, { offset: 0, maxOffset: 0 });
+  }
+  return menuScrollStates.get(key);
+}
+
+function beginMenuScroll(key, contentHeight, options = {}) {
+  const viewport = {
+    x: options.x ?? 0,
+    y: options.y ?? 0,
+    width: options.width ?? WIDTH,
+    height: options.height ?? HEIGHT
+  };
+  const bottomPadding = options.bottomPadding ?? scaledUiSize(28, 28);
+  const state = getMenuScrollState(key);
+  state.maxOffset = Math.max(0, contentHeight + bottomPadding - viewport.height);
+  state.offset = clamp(state.offset, 0, state.maxOffset);
+  activeMenuScroll = { key, state, viewport, contentHeight };
+  currentScrollableMenu = { key, state, viewport };
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(viewport.x, viewport.y, viewport.width, viewport.height);
+  ctx.clip();
+  ctx.translate(0, -state.offset);
+  return activeMenuScroll;
+}
+
+function endMenuScroll() {
+  const scroll = activeMenuScroll;
+  ctx.restore();
+  if (scroll && scroll.state.maxOffset > 0) {
+    drawMenuScrollIndicator(scroll);
+  }
+  activeMenuScroll = null;
+}
+
+function getMenuScrollOffset() {
+  return activeMenuScroll?.state?.offset || 0;
+}
+
+function getMenuScreenY(y) {
+  return y - getMenuScrollOffset();
+}
+
+function getMenuScreenRect(x, y, width, height) {
+  return { x, y: getMenuScreenY(y), width, height };
+}
+
+function isPointInMenuScrollViewport(x, y, scroll = currentScrollableMenu) {
+  return Boolean(scroll?.state?.maxOffset > 0)
+    && pointInRect(x, y, scroll.viewport.x, scroll.viewport.y, scroll.viewport.width, scroll.viewport.height);
+}
+
+function scrollMenuBy(key, delta) {
+  const state = getMenuScrollState(key);
+  const previous = state.offset;
+  state.offset = clamp(state.offset + delta, 0, state.maxOffset);
+  return state.offset !== previous;
+}
+
+function drawMenuScrollIndicator(scroll) {
+  const { viewport, state, contentHeight } = scroll;
+  const trackPadding = scaledUiSize(16, 16);
+  const trackX = viewport.x + viewport.width - scaledUiSize(16, 16);
+  const trackY = viewport.y + trackPadding;
+  const trackH = Math.max(1, viewport.height - trackPadding * 2);
+  const thumbH = Math.max(MENU_SCROLLBAR_MIN_THUMB, trackH * (viewport.height / Math.max(viewport.height, contentHeight)));
+  const thumbTravel = Math.max(1, trackH - thumbH);
+  const thumbY = trackY + thumbTravel * (state.offset / Math.max(1, state.maxOffset));
+  ctx.save();
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = "rgba(203, 213, 223, 0.28)";
+  ctx.fillRect(trackX, trackY, scaledUiSize(5, 5), trackH);
+  ctx.fillStyle = "#cbd5df";
+  ctx.fillRect(trackX, thumbY, scaledUiSize(5, 5), thumbH);
+  ctx.restore();
+}
+
 function getBrowserPwaLayout() {
   const portrait = !runtimeCapabilities.nativeLanAvailable && (window.innerHeight || HEIGHT) >= (window.innerWidth || WIDTH);
   return {
@@ -4411,8 +4499,25 @@ function getBrowserPwaLayout() {
   };
 }
 
+function getBrowserPwaMenuContentHeight(layout) {
+  const buttonH = layout.buttonHeight;
+  const gap = layout.buttonGap;
+  const titleY = layout.top + scaledUiSize(layout.portrait ? 22 : 24, 20);
+  let y = titleY + scaledUiSize(layout.portrait ? 92 : 104, 82);
+  y += scaledUiSize(layout.portrait ? 13 : 15, 12);
+  if (layout.portrait) {
+    y += GAME_MODE_DEFINITIONS.filter((mode) => mode.id !== GAME_MODE.ARMY_VS).length * (buttonH + gap);
+    y += 6 * (buttonH + gap);
+  } else {
+    y += buttonH + gap;
+    y += (buttonH + gap) * 2;
+  }
+  return y + scaledUiSize(onlineFullscreenHint ? 72 : 42, 42);
+}
+
 function drawButtonWithFont(x, y, width, height, label, disabled = false, fontSize = 18) {
-  const hovered = !disabled && pointInRect(mouse.x, mouse.y, x, y, width, height);
+  const screenY = getMenuScreenY(y);
+  const hovered = !disabled && pointInRect(mouse.x, mouse.y, x, screenY, width, height);
   ctx.fillStyle = disabled ? "#6c747d" : hovered ? "#f4f6f8" : "#dbe4ec";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "#111418";
@@ -4424,11 +4529,12 @@ function drawButtonWithFont(x, y, width, height, label, disabled = false, fontSi
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
   ctx.textBaseline = "alphabetic";
-  return { x, y, width, height };
+  return getMenuScreenRect(x, y, width, height);
 }
 
 function drawToggleButtonWithFont(x, y, width, height, label, selected, fontSize = 16) {
-  const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
+  const screenY = getMenuScreenY(y);
+  const hovered = pointInRect(mouse.x, mouse.y, x, screenY, width, height);
   ctx.fillStyle = selected ? "#75d7ff" : hovered ? "#f4f6f8" : "#2f3b48";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = selected ? "#f4f6f8" : "#7b8a99";
@@ -4440,7 +4546,7 @@ function drawToggleButtonWithFont(x, y, width, height, label, selected, fontSize
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
   ctx.textBaseline = "alphabetic";
-  return { x, y, width, height };
+  return getMenuScreenRect(x, y, width, height);
 }
 
 function drawMenu() {
@@ -4449,6 +4555,7 @@ function drawMenu() {
     return;
   }
   drawArenaPreview();
+  beginMenuScroll("menu.native", 790);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont("800 62px system-ui, sans-serif");
@@ -4507,11 +4614,13 @@ function drawMenu() {
     : "Browser/PWA runtime: use Online Multiplayer for room-based play.";
   ctx.fillText(platformLine, WIDTH / 2, 738);
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawBrowserPwaMenu() {
   drawArenaPreview();
   const layout = getBrowserPwaLayout();
+  beginMenuScroll("menu.browser", getBrowserPwaMenuContentHeight(layout));
   const centerX = WIDTH / 2;
   const buttonW = layout.usableWidth;
   const buttonH = layout.buttonHeight;
@@ -4603,6 +4712,7 @@ function drawBrowserPwaMenu() {
     ctx.fillText(truncateText(onlineFullscreenHint, 86), centerX, y + scaledUiSize(44, 44));
   }
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawArenaPreview() {
@@ -4636,6 +4746,7 @@ function drawHostLobby() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.78)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  beginMenuScroll("lobby.host", selectedGameMode === GAME_MODE.ARMY_VS ? 820 : 790);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4685,12 +4796,14 @@ function drawHostLobby() {
   hostLobbyButtons.start = drawButton(WIDTH / 2 - 220, 704, 200, 56, "Start Game", startDisabled);
   hostLobbyButtons.back = drawButton(WIDTH / 2 + 20, 704, 200, 56, "Back");
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawJoinLobby() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.78)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  beginMenuScroll("lobby.join", 930);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4736,12 +4849,14 @@ function drawJoinLobby() {
     }
   }
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawShop() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.72)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  beginMenuScroll("shop", 890);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4763,6 +4878,7 @@ function drawShop() {
 
   shopBackButton = drawButton(WIDTH - 250, 126, 190, 50, "Back");
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawOnlineLobby() {
@@ -4772,12 +4888,14 @@ function drawOnlineLobby() {
   onlineLobbyButtons = { tickRates: [], kicks: [] };
 
   const inRoom = Boolean(onlineRoomCode && onlineServerTransport.connected);
+  beginMenuScroll(inRoom ? "online.room" : "online.picker", inRoom ? scaledUiSize(900, 880) : scaledUiSize(790, 760));
   if (!inRoom) {
     drawOnlineRoomPicker();
   } else {
     drawOnlineRoomLobby();
   }
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawOnlineRoomPicker() {
@@ -5048,6 +5166,7 @@ function drawEquipment() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.76)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  beginMenuScroll("equipment", 840);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont("800 52px system-ui, sans-serif");
@@ -5071,7 +5190,7 @@ function drawEquipment() {
     const owned = isWeaponOwned(weapon.id);
     const equipped = permanent.weaponId === weapon.id;
     drawEquipmentCard(x, y, 202, 76, weapon.name, owned ? weapon.description : `Locked: ${weapon.cost} kill points`, equipped, owned, "#75d7ff");
-    equipmentWeaponButtons.push({ x, y, width: 202, height: 76, weaponId: weapon.id, owned });
+    equipmentWeaponButtons.push({ ...getMenuScreenRect(x, y, 202, 76), weaponId: weapon.id, owned });
   }
 
   ctx.fillStyle = "#f4f6f8";
@@ -5085,7 +5204,7 @@ function drawEquipment() {
     const owned = isMagicOwned(magic.id);
     const equipped = (permanent.equippedMagicIds || []).includes(magic.id);
     drawEquipmentCard(x, y, 202, 92, magic.name, owned ? magic.description : `Locked: ${magic.cost} kill points`, equipped, owned, magic.color);
-    equipmentMagicButtons.push({ x, y, width: 202, height: 92, magicId: magic.id, owned });
+    equipmentMagicButtons.push({ ...getMenuScreenRect(x, y, 202, 92), magicId: magic.id, owned });
   }
 
   const magicNames = getEquippedMagicDefinitions().map((magic) => magic.name).join(" / ") || "None";
@@ -5094,10 +5213,11 @@ function drawEquipment() {
   ctx.fillText(`Equipped Magic: ${magicNames}`, WIDTH / 2, 684);
   equipmentBackButton = drawButton(WIDTH / 2 - 105, 736, 210, 54, "Back");
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawEquipmentCard(x, y, width, height, title, detail, equipped, owned, accent) {
-  const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
+  const hovered = pointInRect(mouse.x, mouse.y, x, getMenuScreenY(y), width, height);
   ctx.fillStyle = equipped ? "rgba(117, 215, 255, 0.24)" : hovered && owned ? "#2f3b48" : "#202832";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = equipped ? accent : owned ? "#5d6e7e" : "#4b5561";
@@ -5115,6 +5235,7 @@ function drawRecords() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.78)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  beginMenuScroll("records", 840);
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont("800 52px system-ui, sans-serif");
@@ -5181,6 +5302,7 @@ function drawRecords() {
 
   recordsBackButton = drawButton(WIDTH / 2 - 105, 756, 210, 54, "Back");
   ctx.textAlign = "left";
+  endMenuScroll();
 }
 
 function drawLevelUp() {
@@ -5289,7 +5411,8 @@ function drawArmyVsGameOver() {
 }
 
 function drawButton(x, y, width, height, label, disabled = false) {
-  const hovered = !disabled && pointInRect(mouse.x, mouse.y, x, y, width, height);
+  const screenY = getMenuScreenY(y);
+  const hovered = !disabled && pointInRect(mouse.x, mouse.y, x, screenY, width, height);
   ctx.fillStyle = disabled ? "#6c747d" : hovered ? "#f4f6f8" : "#dbe4ec";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "#111418";
@@ -5301,11 +5424,12 @@ function drawButton(x, y, width, height, label, disabled = false) {
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
   ctx.textBaseline = "alphabetic";
-  return { x, y, width, height };
+  return getMenuScreenRect(x, y, width, height);
 }
 
 function drawToggleButton(x, y, width, height, label, selected) {
-  const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
+  const screenY = getMenuScreenY(y);
+  const hovered = pointInRect(mouse.x, mouse.y, x, screenY, width, height);
   ctx.fillStyle = selected ? "#75d7ff" : hovered ? "#f4f6f8" : "#2f3b48";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = selected ? "#f4f6f8" : "#7b8a99";
@@ -5317,7 +5441,7 @@ function drawToggleButton(x, y, width, height, label, selected) {
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + width / 2, y + height / 2);
   ctx.textBaseline = "alphabetic";
-  return { x, y, width, height };
+  return getMenuScreenRect(x, y, width, height);
 }
 
 function drawSpriteFrame(image, frameWidth, frameHeight, frameIndex, centerX, centerY, scale) {
@@ -5425,7 +5549,83 @@ function gameLoop(time) {
   requestAnimationFrame(gameLoop);
 }
 
+function isMenuScrollInputEnabled() {
+  return !tutorialPopup
+    && !coopLevelMenuOpen
+    && gameState !== STATE.PLAYING
+    && gameState !== STATE.OPTIONS
+    && Boolean(currentScrollableMenu?.state?.maxOffset > 0);
+}
+
+function beginMenuScrollDrag(event) {
+  if (!isMenuScrollInputEnabled() || !isPointInMenuScrollViewport(mouse.x, mouse.y)) return false;
+  menuScrollDrag = {
+    key: currentScrollableMenu.key,
+    pointerId: event.pointerId,
+    startX: mouse.x,
+    startY: mouse.y,
+    lastY: mouse.y,
+    dragging: false
+  };
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // Pointer capture is a nicety, not a hard dependency.
+  }
+  return true;
+}
+
+function updateMenuScrollDrag(event) {
+  if (!menuScrollDrag || menuScrollDrag.pointerId !== event.pointerId) return false;
+  const point = getCanvasPoint(event);
+  mouse.x = point.x;
+  mouse.y = point.y;
+  const totalDistance = Math.hypot(mouse.x - menuScrollDrag.startX, mouse.y - menuScrollDrag.startY);
+  if (totalDistance >= MENU_SCROLL_DRAG_THRESHOLD) {
+    menuScrollDrag.dragging = true;
+  }
+  if (menuScrollDrag.dragging) {
+    const delta = menuScrollDrag.lastY - mouse.y;
+    scrollMenuBy(menuScrollDrag.key, delta);
+  }
+  menuScrollDrag.lastY = mouse.y;
+  return true;
+}
+
+function endMenuScrollDrag(event) {
+  if (!menuScrollDrag || menuScrollDrag.pointerId !== event.pointerId) return false;
+  const wasDragging = menuScrollDrag.dragging;
+  menuScrollDrag = null;
+  mouse.down = false;
+  if (wasDragging) {
+    menuScrollSuppressClick = true;
+    return true;
+  }
+  handleCanvasClick();
+  return true;
+}
+
+function handleMenuWheel(event) {
+  updateMousePosition(event);
+  if (!isMenuScrollInputEnabled() || !isPointInMenuScrollViewport(mouse.x, mouse.y)) return;
+  const modeMultiplier = event.deltaMode === 1
+    ? 28
+    : event.deltaMode === 2
+      ? canvas.clientHeight || HEIGHT
+      : 1;
+  const delta = cssToLogical(event.deltaY * modeMultiplier);
+  if (scrollMenuBy(currentScrollableMenu.key, delta)) {
+    event.preventDefault();
+  }
+}
+
 function handleCanvasClick() {
+  if (menuScrollSuppressClick) {
+    menuScrollSuppressClick = false;
+    mouse.down = false;
+    return;
+  }
+
   if (tutorialPopup) {
     handleTutorialClick();
     return;
@@ -5771,6 +5971,8 @@ function handlePointerDown(event) {
   event.preventDefault();
   updateMousePosition(event);
 
+  if (beginMenuScrollDrag(event)) return;
+
   if (tutorialPopup) {
     handleCanvasClick();
     return;
@@ -5831,6 +6033,10 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!isTouchPointer(event)) return;
+  if (updateMenuScrollDrag(event)) {
+    event.preventDefault();
+    return;
+  }
   if (gameState === STATE.OPTIONS && activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
     event.preventDefault();
     const point = getCanvasPoint(event);
@@ -5855,6 +6061,8 @@ function handlePointerEnd(event) {
   if (!isTouchPointer(event)) return;
   event.preventDefault();
 
+  if (endMenuScrollDrag(event)) return;
+
   if (activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
     activeOptionsSlider = null;
     mouse.down = false;
@@ -5871,6 +6079,9 @@ function handlePointerEnd(event) {
 }
 
 function handleLostPointerCapture(event) {
+  if (menuScrollDrag && menuScrollDrag.pointerId === event.pointerId) {
+    menuScrollDrag = null;
+  }
   if (activeOptionsSlider && activeOptionsSlider.pointerId === event.pointerId) {
     activeOptionsSlider = null;
   }
@@ -7656,6 +7867,7 @@ canvas.addEventListener("mousedown", (event) => {
   mouse.down = true;
   handleCanvasClick();
 });
+canvas.addEventListener("wheel", handleMenuWheel, { passive: false });
 canvas.addEventListener("pointerdown", handlePointerDown);
 canvas.addEventListener("pointermove", handlePointerMove);
 canvas.addEventListener("pointerup", handlePointerEnd);
