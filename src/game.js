@@ -553,9 +553,11 @@ let fullscreenButton;
 let browserExitButton;
 let modeButtons = [];
 let shopBackButton;
+let shopBuyButton;
 let shopPurchaseButtons = [];
 let weaponSelectButtons = [];
 let magicPurchaseButtons = [];
+let selectedShopItem = null;
 let equipmentWeaponButtons = [];
 let equipmentMagicButtons = [];
 let equipmentBackButton;
@@ -878,7 +880,7 @@ function getSpawnPosition(size, index) {
 }
 
 function update(dt) {
-  if ((isBrowserOrientationGateActive() || browserFullscreenSuspended) && sessionMode === SESSION.SINGLE) return;
+  if (isBrowserOrientationGateActive() && sessionMode === SESSION.SINGLE) return;
   if (gameState === STATE.OPTIONS) return;
 
   updateEffects(dt);
@@ -3144,49 +3146,42 @@ function draw() {
     drawMenu();
     drawOptionsMenu();
     drawTutorialPopup();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.HOST_LOBBY) {
     drawHostLobby();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.JOIN_LOBBY) {
     drawJoinLobby();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.ONLINE_LOBBY) {
     drawOnlineLobby();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.SHOP) {
     drawShop();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.EQUIPMENT) {
     drawEquipment();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
   if (gameState === STATE.RECORDS) {
     drawRecords();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3195,7 +3190,6 @@ function draw() {
     drawMenu();
     drawOptionsMenu();
     drawTutorialPopup();
-    drawBrowserExitButton();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -3234,12 +3228,10 @@ function draw() {
 
   if (gameState === STATE.OPTIONS) {
     drawOptionsMenu();
-    drawBrowserExitButton();
   } else if (coopLevelMenuOpen) {
     drawLevelUp();
   } else if (gameState === STATE.PLAYING) {
     drawSettingsButton();
-    drawBrowserExitButton();
     drawMagicButtons();
     drawMobileControls();
   }
@@ -3992,8 +3984,9 @@ function drawOptionsMenu() {
   ctx.fillStyle = "rgba(8, 11, 16, 0.76)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
+  const showBrowserExitOption = runtimeCapabilities.browser && !runtimeCapabilities.nativeWrapper && isBrowserPhoneViewport() && !browserFullscreenSuspended;
   const panelWidth = 520;
-  const panelHeight = 580;
+  const panelHeight = showBrowserExitOption && previousGameState === STATE.PLAYING ? 650 : 580;
   const x = WIDTH / 2 - panelWidth / 2;
   const y = HEIGHT / 2 - panelHeight / 2;
   ctx.fillStyle = "#202832";
@@ -4016,11 +4009,18 @@ function drawOptionsMenu() {
   ctx.fillText("Font Scale", WIDTH / 2, y + 220);
   drawOptionSlider("fontScale", WIDTH / 2 - 190, y + 250, 380, 34, settings.fontScale, 1, 2, true, `${Math.round(settings.fontScale * 100)}%`);
 
-  drawOptionButton(WIDTH / 2 - 170, y + 336, 340, 54, "Help / Tutorials", false, openTutorialHelpMenu);
+  let buttonY = y + 336;
+  drawOptionButton(WIDTH / 2 - 170, buttonY, 340, 54, "Help / Tutorials", false, openTutorialHelpMenu);
+  buttonY += 70;
   const closeLabel = previousGameState === STATE.MENU ? "Back to Menu" : "Resume";
-  drawOptionButton(WIDTH / 2 - 170, y + 406, 340, 54, closeLabel, false, closeOptionsMenu);
+  drawOptionButton(WIDTH / 2 - 170, buttonY, 340, 54, closeLabel, false, closeOptionsMenu);
+  buttonY += 70;
   if (previousGameState === STATE.PLAYING) {
-    drawOptionButton(WIDTH / 2 - 170, y + 476, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
+    drawOptionButton(WIDTH / 2 - 170, buttonY, 340, 54, "Leave Match / Main Menu", false, returnToMenu);
+    buttonY += 70;
+  }
+  if (showBrowserExitOption) {
+    drawOptionButton(WIDTH / 2 - 170, buttonY, 340, 54, "EXIT", false, suspendBrowserFullscreenFlow, { danger: true });
   }
   ctx.restore();
 }
@@ -4065,14 +4065,17 @@ function drawOptionSlider(id, x, y, width, height, value, min, max, stepped, lab
   optionsSliders.push({ id, x: x - 24, y: y - 18, width: width + 48, height: height + 50, trackX: x, trackWidth: width, min, max, stepped });
 }
 
-function drawOptionButton(x, y, width, height, label, selected, action) {
+function drawOptionButton(x, y, width, height, label, selected, action, options = {}) {
   const hovered = pointInRect(mouse.x, mouse.y, x, y, width, height);
-  ctx.fillStyle = selected ? "#75d7ff" : hovered ? "#dbe4ec" : "#2f3b48";
+  const danger = Boolean(options.danger);
+  ctx.fillStyle = danger
+    ? hovered ? "#ff6b8f" : "#ef476f"
+    : selected ? "#75d7ff" : hovered ? "#dbe4ec" : "#2f3b48";
   ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = selected ? "#f4f6f8" : "#7b8a99";
+  ctx.strokeStyle = danger ? "#f4f6f8" : selected ? "#f4f6f8" : "#7b8a99";
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, width, height);
-  ctx.fillStyle = selected ? "#101216" : hovered ? "#101216" : "#f4f6f8";
+  ctx.fillStyle = danger ? "#f4f6f8" : selected ? "#101216" : hovered ? "#101216" : "#f4f6f8";
   setCanvasFont("800 17px system-ui, sans-serif");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -4907,7 +4910,7 @@ function drawShop() {
   drawArenaPreview();
   ctx.fillStyle = "rgba(12, 14, 18, 0.72)";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  beginMenuScroll("shop", 890);
+  beginMenuScroll("shop", 980);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
@@ -4919,13 +4922,15 @@ function drawShop() {
   shopPurchaseButtons = [];
   weaponSelectButtons = [];
   magicPurchaseButtons = [];
+  shopBuyButton = null;
   const startX = WIDTH / 2 - 480;
   for (let tier = 1; tier < SWORD_TIERS.length; tier += 1) {
     drawShopTier(startX + (tier - 1) * 320, 232, tier);
   }
 
-  drawWeaponSelector(WIDTH / 2 - 540, 590);
-  drawMagicShop(WIDTH / 2 - 432, 748);
+  drawWeaponSelector(WIDTH / 2 - 540, 560);
+  drawMagicShop(WIDTH / 2 - 432, 734);
+  drawShopSelectionPanel(WIDTH / 2 - 430, 850, 860, 98);
 
   shopBackButton = drawButton(WIDTH - 250, 126, 190, 50, "Back");
   ctx.textAlign = "left";
@@ -4939,7 +4944,11 @@ function drawOnlineLobby() {
   onlineLobbyButtons = { tickRates: [], kicks: [] };
 
   const inRoom = Boolean(onlineRoomCode && onlineServerTransport.connected);
-  beginMenuScroll(inRoom ? "online.room" : "online.picker", inRoom ? scaledUiSize(900, 880) : scaledUiSize(790, 760));
+  const layout = getBrowserPwaLayout();
+  const inRoomContentHeight = layout.portrait || WIDTH < scaledUiSize(760, 760)
+    ? scaledUiSize(1320, 1260)
+    : scaledUiSize(980, 940);
+  beginMenuScroll(inRoom ? "online.room" : "online.picker", inRoom ? inRoomContentHeight : scaledUiSize(790, 760));
   if (!inRoom) {
     drawOnlineRoomPicker();
   } else {
@@ -4954,46 +4963,47 @@ function drawOnlineRoomPicker() {
   const centerX = WIDTH / 2;
   const panelW = Math.min(WIDTH * 0.82, scaledUiSize(620, 620));
   const panelX = centerX - panelW / 2;
-  const buttonH = scaledUiSize(64, 56);
-  const buttonGap = scaledUiSize(14, 14);
-  let y = scaledUiSize(110, 120);
+  const buttonH = scaledUiSize(56, 52);
+  const buttonGap = scaledUiSize(10, 10);
+  let y = scaledUiSize(70, 70);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.titleFont)}px system-ui, sans-serif`);
   ctx.fillText("Online Multiplayer", centerX, y);
-  y += scaledUiSize(42, 42);
-  ctx.fillStyle = "#cbd5df";
-  setCanvasFont(`700 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
-  ctx.fillText(runtimeCapabilities.nativeWrapper ? "Optional relay; native LAN remains unchanged." : "Browser/PWA rooms use the configured relay.", centerX, y);
-  y += scaledUiSize(36, 36);
-  ctx.fillStyle = getConfiguredOnlineServerUrl() ? "#75d7ff" : "#ffd166";
-  ctx.fillText(`Server: ${truncateText(getOnlineServerLabel(), 74)}`, centerX, y);
-  y += scaledUiSize(36, 36);
-  ctx.fillStyle = "#cbd5df";
-  ctx.fillText(truncateText(onlineStatus, 82), centerX, y);
-  y += scaledUiSize(50, 50);
+  y += scaledUiSize(38, 38);
 
   ctx.fillStyle = "#202832";
-  ctx.fillRect(panelX, y, panelW, scaledUiSize(250, 240));
+  const panelH = scaledUiSize(344, 330);
+  ctx.fillRect(panelX, y, panelW, panelH);
   ctx.strokeStyle = "#5d6e7e";
   ctx.lineWidth = 2;
-  ctx.strokeRect(panelX, y, panelW, scaledUiSize(250, 240));
+  ctx.strokeRect(panelX, y, panelW, panelH);
 
-  const cardY = y + scaledUiSize(40, 40);
+  const cardY = y + scaledUiSize(36, 34);
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
   ctx.fillText(`Mode: ${getGameModeDefinition(getSelectedPlayableMode()).label}`, centerX, cardY);
   ctx.fillStyle = "#ffd166";
-  ctx.fillText(onlineRoomCode ? `Room Code: ${onlineRoomCode}` : "Set a room code to join friends.", centerX, cardY + scaledUiSize(36, 36));
+  ctx.fillText(onlineRoomCode ? `Room Code: ${onlineRoomCode}` : "Set a room code to join friends.", centerX, cardY + scaledUiSize(30, 30));
 
   const unavailable = !getConfiguredOnlineServerUrl() || !runtimeCapabilities.websocketAvailable;
   const buttonW = Math.min(panelW * 0.86, scaledUiSize(430, 430));
   const buttonX = centerX - buttonW / 2;
-  onlineLobbyButtons.create = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118), buttonW, buttonH, "Create Room", unavailable, layout.buttonFont);
-  onlineLobbyButtons.join = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118) + buttonH + buttonGap, buttonW, buttonH, "Join Room", unavailable, layout.buttonFont);
-  onlineLobbyButtons.code = drawButtonWithFont(buttonX, y + scaledUiSize(118, 118) + (buttonH + buttonGap) * 2, buttonW, buttonH, onlineRoomCode ? "Edit Room Code" : "Room Code", false, layout.buttonFont);
-  onlineLobbyButtons.back = drawButtonWithFont(centerX - buttonW / 2, y + scaledUiSize(118, 118) + (buttonH + buttonGap) * 3, buttonW, buttonH, "Back", false, layout.buttonFont);
+  const buttonsY = y + scaledUiSize(96, 92);
+  onlineLobbyButtons.create = drawButtonWithFont(buttonX, buttonsY, buttonW, buttonH, "Create Room", unavailable, layout.buttonFont);
+  onlineLobbyButtons.join = drawButtonWithFont(buttonX, buttonsY + buttonH + buttonGap, buttonW, buttonH, "Join Room", unavailable, layout.buttonFont);
+  onlineLobbyButtons.code = drawButtonWithFont(buttonX, buttonsY + (buttonH + buttonGap) * 2, buttonW, buttonH, onlineRoomCode ? "Edit Room Code" : "Room Code", false, layout.buttonFont);
+  onlineLobbyButtons.back = drawButtonWithFont(centerX - buttonW / 2, buttonsY + (buttonH + buttonGap) * 3, buttonW, buttonH, "Back", false, layout.buttonFont);
+
+  const infoY = y + panelH + scaledUiSize(34, 30);
+  ctx.fillStyle = "#cbd5df";
+  setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
+  ctx.fillText(runtimeCapabilities.nativeWrapper ? "Optional relay; native LAN remains unchanged." : "Browser/PWA rooms use the configured relay.", centerX, infoY);
+  ctx.fillStyle = getConfiguredOnlineServerUrl() ? "#75d7ff" : "#ffd166";
+  ctx.fillText(`Server: ${truncateText(getOnlineServerLabel(), 86)}`, centerX, infoY + scaledUiSize(26, 24));
+  ctx.fillStyle = "#9aa7b4";
+  ctx.fillText(truncateText(onlineStatus, 92), centerX, infoY + scaledUiSize(52, 48));
 }
 
 function drawOnlineRoomLobby() {
@@ -5001,74 +5011,98 @@ function drawOnlineRoomLobby() {
   const portrait = layout.portrait || WIDTH < scaledUiSize(760, 760);
   const margin = scaledUiSize(28, 28);
   const gap = scaledUiSize(18, 18);
-  const top = scaledUiSize(78, 78);
-  const panelH = HEIGHT - top - scaledUiSize(88, 88);
+  const top = scaledUiSize(72, 72);
+  const basePanelH = portrait
+    ? scaledUiSize(540, 520)
+    : Math.max(scaledUiSize(560, 540), HEIGHT - top - scaledUiSize(86, 86));
   const leftW = portrait ? WIDTH - margin * 2 : Math.min(WIDTH * 0.44, scaledUiSize(510, 510));
   const rightW = portrait ? WIDTH - margin * 2 : WIDTH - margin * 3 - leftW;
   const leftX = margin;
   const rightX = portrait ? margin : leftX + leftW + margin;
-  const chatY = portrait ? top + panelH * 0.55 + gap : top;
-  const chatH = portrait ? Math.max(scaledUiSize(300, 300), HEIGHT - chatY - scaledUiSize(92, 92)) : panelH;
-  const leftH = portrait ? panelH * 0.52 : panelH;
   const lobbyMode = getGameModeDefinition(onlineLobbyState.mode || selectedGameMode).label;
+  const displayPlayers = getOnlineLobbyDisplayPlayers();
+  const playerRows = Math.max(1, displayPlayers.length);
+  const rowH = scaledUiSize(32, 30);
+  const buttonH = scaledUiSize(52, 50);
+  const buttonGap = scaledUiSize(10, 10);
+  const optionsH = onlineConnectionOptionsOpen && sessionMode === SESSION.HOST ? scaledUiSize(152, 150) : 0;
+  const hostControls = sessionMode === SESSION.HOST ? 4 : 2;
+  const estimatedLeftContentH = scaledUiSize(252, 240)
+    + playerRows * rowH
+    + scaledUiSize(28, 28)
+    + hostControls * buttonH
+    + Math.max(0, hostControls - 1) * buttonGap
+    + optionsH;
+  const leftH = Math.max(basePanelH, estimatedLeftContentH + scaledUiSize(48, 48));
+  const chatY = portrait ? top + leftH + gap : top;
+  const chatH = portrait ? scaledUiSize(430, 410) : basePanelH;
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.titleFont * 0.86)}px system-ui, sans-serif`);
-  ctx.fillText("Online Lobby", WIDTH / 2, scaledUiSize(48, 48));
+  ctx.fillText("Online Lobby", WIDTH / 2, scaledUiSize(46, 46));
 
   drawPanel(leftX, top, leftW, leftH);
   drawPanel(rightX, chatY, rightW, chatH);
 
   ctx.textAlign = "left";
-  let y = top + scaledUiSize(36, 36);
+  const inset = scaledUiSize(24, 24);
+  let y = top + scaledUiSize(34, 34);
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
-  ctx.fillText(`Mode: ${lobbyMode}`, leftX + scaledUiSize(24, 24), y);
-  y += scaledUiSize(32, 32);
-  ctx.fillStyle = "#ffd166";
-  ctx.fillText(`Room: ${onlineRoomCode}`, leftX + scaledUiSize(24, 24), y);
+  ctx.fillText(`Mode: ${lobbyMode}`, leftX + inset, y);
   y += scaledUiSize(30, 30);
+  ctx.fillStyle = "#ffd166";
+  ctx.fillText(`Room: ${onlineRoomCode}`, leftX + inset, y);
+  y += scaledUiSize(28, 28);
   if (onlineRoomName) {
     ctx.fillStyle = "#cbd5df";
-    ctx.fillText(`Name: ${truncateText(onlineRoomName, 34)}`, leftX + scaledUiSize(24, 24), y);
-    y += scaledUiSize(28, 28);
+    ctx.fillText(`Name: ${truncateText(onlineRoomName, 28)}`, leftX + inset, y);
+    y += scaledUiSize(26, 26);
   }
   ctx.fillStyle = "#cbd5df";
   setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
-  ctx.fillText("Share this room code with friends.", leftX + scaledUiSize(24, 24), y);
-  y += scaledUiSize(34, 34);
+  ctx.fillText("Share this room code with friends.", leftX + inset, y);
+  y += scaledUiSize(30, 30);
   ctx.fillStyle = "#75d7ff";
   setCanvasFont(`800 ${Math.round(layout.subtitleFont)}px system-ui, sans-serif`);
-  ctx.fillText(`Tick Rate: ${onlineTickRate} Hz`, leftX + scaledUiSize(24, 24), y);
-  y += scaledUiSize(34, 34);
+  ctx.fillText(`Tick Rate: ${onlineTickRate} Hz`, leftX + inset, y);
+  y += scaledUiSize(32, 32);
   ctx.fillStyle = "#f4f6f8";
-  ctx.fillText("Players", leftX + scaledUiSize(24, 24), y);
-  y += scaledUiSize(28, 28);
+  ctx.fillText("Players", leftX + inset, y);
+  y += scaledUiSize(26, 26);
 
-  const displayPlayers = getOnlineLobbyDisplayPlayers();
-  for (let i = 0; i < Math.max(1, displayPlayers.length); i += 1) {
+  for (let i = 0; i < playerRows; i += 1) {
     const lobbyPlayer = displayPlayers[i];
-    const rowY = y + i * scaledUiSize(34, 34);
+    const rowY = y + i * rowH;
     ctx.fillStyle = lobbyPlayer ? PLAYER_COLORS[i % PLAYER_COLORS.length] : "#7b8a99";
     setCanvasFont(`800 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
-    ctx.fillText(lobbyPlayer ? `${lobbyPlayer.name}${lobbyPlayer.host ? "  HOST" : ""}` : "Waiting...", leftX + scaledUiSize(32, 32), rowY);
+    ctx.fillText(lobbyPlayer ? `${truncateText(lobbyPlayer.name, 22)}${lobbyPlayer.host ? "  HOST" : ""}` : "Waiting...", leftX + inset + scaledUiSize(8, 8), rowY);
     if (sessionMode === SESSION.HOST && lobbyPlayer && !lobbyPlayer.host && lobbyPlayer.clientId) {
       const kick = drawButtonWithFont(leftX + leftW - scaledUiSize(62, 62), rowY - scaledUiSize(22, 22), scaledUiSize(38, 38), scaledUiSize(30, 30), "X", false, layout.smallFont);
       onlineLobbyButtons.kicks.push({ ...kick, clientId: lobbyPlayer.clientId });
     }
   }
+  y += playerRows * rowH + scaledUiSize(22, 22);
 
-  const controlsY = top + leftH - scaledUiSize(sessionMode === SESSION.HOST ? 210 : 142, sessionMode === SESSION.HOST ? 210 : 142);
-  onlineLobbyButtons.start = drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY, leftW - scaledUiSize(48, 48), scaledUiSize(58, 56), "Start Game", sessionMode !== SESSION.HOST || !onlineRoomCode, layout.buttonFont);
-  onlineLobbyButtons.options = sessionMode === SESSION.HOST
-    ? drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY + scaledUiSize(70, 70), leftW - scaledUiSize(48, 48), scaledUiSize(54, 52), onlineConnectionOptionsOpen ? "Hide Server Options" : "Server/Connection Options", false, layout.smallFont)
+  const buttonX = leftX + inset;
+  const buttonW = leftW - inset * 2;
+  onlineLobbyButtons.start = drawButtonWithFont(buttonX, y, buttonW, buttonH, "Start Game", sessionMode !== SESSION.HOST || !onlineRoomCode, layout.buttonFont);
+  y += buttonH + buttonGap;
+  onlineLobbyButtons.roomName = sessionMode === SESSION.HOST
+    ? drawButtonWithFont(buttonX, y, buttonW, buttonH, onlineRoomName ? "Edit Room Name" : "Room Name", false, layout.smallFont)
     : null;
-  onlineLobbyButtons.back = drawButtonWithFont(leftX + scaledUiSize(24, 24), controlsY + scaledUiSize(sessionMode === SESSION.HOST ? 134 : 70, sessionMode === SESSION.HOST ? 134 : 70), leftW - scaledUiSize(48, 48), scaledUiSize(54, 52), "Exit Lobby", false, layout.buttonFont);
-
-  if (onlineConnectionOptionsOpen && sessionMode === SESSION.HOST) {
-    drawOnlineConnectionOptions(leftX, controlsY - scaledUiSize(180, 180), leftW);
+  if (sessionMode === SESSION.HOST) y += buttonH + buttonGap;
+  onlineLobbyButtons.options = sessionMode === SESSION.HOST
+    ? drawButtonWithFont(buttonX, y, buttonW, buttonH, onlineConnectionOptionsOpen ? "Hide Server Options" : "Server/Connection Options", false, layout.smallFont)
+    : null;
+  if (sessionMode === SESSION.HOST) {
+    y += buttonH + buttonGap;
+    if (onlineConnectionOptionsOpen) {
+      y += drawOnlineConnectionOptions(leftX, y, leftW) + buttonGap;
+    }
   }
+  onlineLobbyButtons.back = drawButtonWithFont(buttonX, y, buttonW, buttonH, "Exit Lobby", false, layout.buttonFont);
 
   drawOnlineChat(rightX, chatY, rightW, chatH, layout);
 }
@@ -5084,10 +5118,11 @@ function drawPanel(x, y, width, height) {
 function drawOnlineConnectionOptions(x, y, width) {
   const innerX = x + scaledUiSize(24, 24);
   const innerW = width - scaledUiSize(48, 48);
+  const panelH = scaledUiSize(146, 144);
   ctx.fillStyle = "rgba(17, 20, 24, 0.92)";
-  ctx.fillRect(innerX, y, innerW, scaledUiSize(166, 166));
+  ctx.fillRect(innerX, y, innerW, panelH);
   ctx.strokeStyle = "#75d7ff";
-  ctx.strokeRect(innerX, y, innerW, scaledUiSize(166, 166));
+  ctx.strokeRect(innerX, y, innerW, panelH);
   ctx.textAlign = "left";
   ctx.fillStyle = "#f4f6f8";
   setCanvasFont(`800 ${Math.round(scaledUiSize(14, 14))}px system-ui, sans-serif`);
@@ -5108,7 +5143,7 @@ function drawOnlineConnectionOptions(x, y, width) {
     setCanvasFont(`800 ${Math.round(scaledUiSize(12, 12))}px system-ui, sans-serif`);
     ctx.fillText("HIGH BATTERY USAGE!", innerX + scaledUiSize(14, 14), y + scaledUiSize(136, 136));
   }
-  onlineLobbyButtons.roomName = drawButtonWithFont(innerX + innerW - scaledUiSize(166, 166), y + scaledUiSize(122, 122), scaledUiSize(152, 152), scaledUiSize(34, 34), onlineRoomName ? "Edit Name" : "Room Name", false, scaledUiSize(11, 11));
+  return panelH;
 }
 
 function drawOnlineChat(x, y, width, height, layout) {
@@ -5120,20 +5155,21 @@ function drawOnlineChat(x, y, width, height, layout) {
   setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
   ctx.fillText(`Status: ${truncateText(onlineStatus, 54)}`, x + scaledUiSize(24, 24), y + scaledUiSize(64, 64));
   const messages = onlineLobbyState.chat || [];
-  const first = Math.max(0, messages.length - 9);
-  let lineY = y + scaledUiSize(102, 102);
+  const lineH = scaledUiSize(28, 26);
+  const buttonH = scaledUiSize(54, 52);
+  const buttonY = y + height - scaledUiSize(76, 76);
+  const messageStartY = y + scaledUiSize(102, 102);
+  const maxMessages = Math.max(3, Math.floor((buttonY - messageStartY - scaledUiSize(14, 14)) / lineH));
+  const first = Math.max(0, messages.length - maxMessages);
+  let lineY = messageStartY;
   for (let i = first; i < messages.length; i += 1) {
     const message = messages[i];
     ctx.fillStyle = message.system ? "#ffd166" : "#cbd5df";
     setCanvasFont(`700 ${Math.round(layout.smallFont)}px system-ui, sans-serif`);
     ctx.fillText(truncateText(`${message.sender || "Player"}: ${message.text || ""}`, 62), x + scaledUiSize(24, 24), lineY);
-    lineY += scaledUiSize(28, 28);
+    lineY += lineH;
   }
-  const inputH = scaledUiSize(54, 52);
-  const sendW = scaledUiSize(120, 112);
-  const inputY = y + height - scaledUiSize(76, 76);
-  onlineLobbyButtons.chatInput = drawButtonWithFont(x + scaledUiSize(24, 24), inputY, width - scaledUiSize(62, 62) - sendW, inputH, "Tap Message", false, layout.smallFont);
-  onlineLobbyButtons.chatSend = drawButtonWithFont(x + width - scaledUiSize(24, 24) - sendW, inputY, sendW, inputH, "Send", false, layout.smallFont);
+  onlineLobbyButtons.chatMessage = drawButtonWithFont(x + scaledUiSize(24, 24), buttonY, width - scaledUiSize(48, 48), buttonH, "Chat Message", false, layout.smallFont);
 }
 
 function drawShopTier(x, y, tier) {
@@ -5142,11 +5178,12 @@ function drawShopTier(x, y, tier) {
   const locked = permanent.swordTier < tier - 1;
   const affordable = permanent.killPoints >= upgrade.cost;
   const canBuy = !purchased && !locked && affordable;
+  const selected = selectedShopItem?.type === "swordTier" && selectedShopItem.tier === tier;
 
   ctx.fillStyle = "#202832";
   ctx.fillRect(x, y, 280, 330);
-  ctx.strokeStyle = purchased ? "#8de85c" : "#5d6e7e";
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = selected ? "#ffd166" : purchased ? "#8de85c" : "#5d6e7e";
+  ctx.lineWidth = selected ? 4 : 2;
   ctx.strokeRect(x, y, 280, 330);
 
   ctx.textAlign = "center";
@@ -5159,13 +5196,13 @@ function drawShopTier(x, y, tier) {
   ctx.fillText(`${upgrade.speed}x swing speed`, x + 140, y + 136);
   ctx.fillText(`Cost: ${upgrade.cost} kill points`, x + 140, y + 188);
 
-  let label = "Buy";
+  let label = "Select";
   if (purchased) label = "Purchased";
   if (locked) label = "Locked";
   if (!purchased && !locked && !affordable) label = "Need Points";
 
-  const button = drawButton(x + 55, y + 238, 170, 48, label, !canBuy && !purchased);
-  shopPurchaseButtons.push({ ...button, tier, canBuy });
+  const button = drawButton(x + 55, y + 238, 170, 48, label, false);
+  shopPurchaseButtons.push({ ...button, type: "swordTier", tier, canBuy, purchased, locked, affordable, cost: upgrade.cost, name: upgrade.name });
 }
 
 function drawWeaponSelector(x, y) {
@@ -5185,12 +5222,18 @@ function drawWeaponSelector(x, y) {
     const buttonY = y + 42 + row * 54;
     const owned = isWeaponOwned(weapon.id);
     const affordable = permanent.killPoints >= weapon.cost;
+    const selected = selectedShopItem?.type === "weapon" && selectedShopItem.id === weapon.id;
     const label = owned ? weapon.name : `${weapon.name} ${weapon.cost}`;
-    const button = drawToggleButton(buttonX, buttonY, 202, 44, label, owned);
+    const button = drawToggleButton(buttonX, buttonY, 202, 44, label, owned || selected);
+    if (selected) {
+      ctx.strokeStyle = "#ffd166";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(buttonX, buttonY, 202, 44);
+    }
     ctx.fillStyle = owned ? "#8de85c" : affordable ? "#cbd5df" : "#7b8a99";
     setCanvasFont("600 11px system-ui, sans-serif");
     ctx.fillText(`${weapon.category}  ${formatMultiplier(weapon.damageMultiplier)}  ${weapon.range}`, buttonX + 101, buttonY + 58);
-    weaponSelectButtons.push({ ...button, weaponId: weapon.id, canBuy: !owned && affordable });
+    weaponSelectButtons.push({ ...button, type: "weapon", weaponId: weapon.id, canBuy: !owned && affordable, owned, affordable, cost: weapon.cost, name: weapon.name });
   }
 }
 
@@ -5204,12 +5247,93 @@ function drawMagicShop(x, y) {
     const buttonX = x + i * 216;
     const owned = isMagicOwned(magic.id);
     const affordable = permanent.killPoints >= magic.cost;
+    const selected = selectedShopItem?.type === "magic" && selectedShopItem.id === magic.id;
     const label = owned ? magic.name : `${magic.name} ${magic.cost}`;
-    const button = drawToggleButton(buttonX, y + 32, 202, 46, label, owned);
+    const button = drawToggleButton(buttonX, y + 32, 202, 46, label, owned || selected);
+    if (selected) {
+      ctx.strokeStyle = "#ffd166";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(buttonX, y + 32, 202, 46);
+    }
     ctx.fillStyle = owned ? magic.color : affordable ? "#cbd5df" : "#7b8a99";
     setCanvasFont("600 12px system-ui, sans-serif");
     ctx.fillText(truncateText(magic.description, 25), buttonX + 101, y + 96);
-    magicPurchaseButtons.push({ ...button, magicId: magic.id, canBuy: !owned && affordable });
+    magicPurchaseButtons.push({ ...button, type: "magic", magicId: magic.id, canBuy: !owned && affordable, owned, affordable, cost: magic.cost, name: magic.name });
+  }
+}
+
+function drawShopSelectionPanel(x, y, width, height) {
+  const status = getSelectedShopItemStatus();
+  ctx.fillStyle = "#202832";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = status.canBuy ? "#8de85c" : status.selected ? "#ffd166" : "#5d6e7e";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#f4f6f8";
+  setCanvasFont("800 18px system-ui, sans-serif");
+  ctx.fillText(status.title, x + 24, y + 32);
+  ctx.fillStyle = status.canBuy ? "#8de85c" : status.selected ? "#ffd166" : "#9aa7b4";
+  setCanvasFont("700 14px system-ui, sans-serif");
+  ctx.fillText(status.detail, x + 24, y + 62);
+
+  shopBuyButton = drawButton(x + width - 190, y + 24, 154, 50, "Buy", !status.canBuy);
+  shopBuyButton.canBuy = status.canBuy;
+}
+
+function getSelectedShopItemStatus() {
+  const none = { selected: false, canBuy: false, title: "Select an item", detail: "Tap an upgrade, weapon, or magic skill, then press Buy." };
+  if (!selectedShopItem) return none;
+  if (selectedShopItem.type === "swordTier") {
+    const tier = selectedShopItem.tier;
+    const upgrade = SWORD_TIERS[tier];
+    if (!upgrade) return none;
+    const purchased = permanent.swordTier >= tier;
+    const locked = permanent.swordTier < tier - 1;
+    const affordable = permanent.killPoints >= upgrade.cost;
+    return {
+      selected: true,
+      canBuy: !purchased && !locked && affordable,
+      title: `${upgrade.name} - ${upgrade.cost} kill points`,
+      detail: purchased ? "Already purchased." : locked ? "Locked: buy the previous sword tier first." : affordable ? "Ready to buy." : `Need ${upgrade.cost - permanent.killPoints} more kill points.`
+    };
+  }
+  if (selectedShopItem.type === "weapon") {
+    const weapon = getWeaponById(selectedShopItem.id);
+    const owned = isWeaponOwned(weapon.id);
+    const affordable = permanent.killPoints >= weapon.cost;
+    return {
+      selected: true,
+      canBuy: !owned && affordable,
+      title: `${weapon.name} - ${weapon.cost} kill points`,
+      detail: owned ? "Already owned. Equip it from Equipment." : affordable ? truncateText(weapon.description, 78) : `Need ${weapon.cost - permanent.killPoints} more kill points.`
+    };
+  }
+  if (selectedShopItem.type === "magic") {
+    const magic = getMagicById(selectedShopItem.id);
+    if (!magic) return none;
+    const owned = isMagicOwned(magic.id);
+    const affordable = permanent.killPoints >= magic.cost;
+    return {
+      selected: true,
+      canBuy: !owned && affordable,
+      title: `${magic.name} - ${magic.cost} kill points`,
+      detail: owned ? "Already owned. Equip it from Equipment." : affordable ? magic.description : `Need ${magic.cost - permanent.killPoints} more kill points.`
+    };
+  }
+  return none;
+}
+
+function buySelectedShopItem() {
+  const status = getSelectedShopItemStatus();
+  if (!status.canBuy || !selectedShopItem) return;
+  if (selectedShopItem.type === "swordTier") {
+    buySwordTier(selectedShopItem.tier);
+  } else if (selectedShopItem.type === "weapon") {
+    buyWeapon(selectedShopItem.id);
+  } else if (selectedShopItem.type === "magic") {
+    buyMagic(selectedShopItem.id);
   }
 }
 
@@ -5604,7 +5728,6 @@ function isMenuScrollInputEnabled() {
   return !tutorialPopup
     && !textInputState
     && !isBrowserOrientationGateActive()
-    && !browserFullscreenSuspended
     && !coopLevelMenuOpen
     && gameState !== STATE.PLAYING
     && gameState !== STATE.OPTIONS
@@ -5660,7 +5783,7 @@ function endMenuScrollDrag(event) {
 }
 
 function handleMenuWheel(event) {
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) return;
+  if (textInputState || isBrowserOrientationGateActive()) return;
   updateMousePosition(event);
   if (!isMenuScrollInputEnabled() || !isPointInMenuScrollViewport(mouse.x, mouse.y)) return;
   const modeMultiplier = event.deltaMode === 1
@@ -5675,7 +5798,7 @@ function handleMenuWheel(event) {
 }
 
 function handleCanvasClick() {
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
+  if (textInputState || isBrowserOrientationGateActive()) {
     mouse.down = false;
     return;
   }
@@ -5894,12 +6017,7 @@ function handleCanvasClick() {
       promptOnlineRoomName();
       return;
     }
-    if (onlineLobbyButtons.chatInput && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.chatInput.x, onlineLobbyButtons.chatInput.y, onlineLobbyButtons.chatInput.width, onlineLobbyButtons.chatInput.height)) {
-      mouse.down = false;
-      promptAndSendOnlineChat();
-      return;
-    }
-    if (onlineLobbyButtons.chatSend && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.chatSend.x, onlineLobbyButtons.chatSend.y, onlineLobbyButtons.chatSend.width, onlineLobbyButtons.chatSend.height)) {
+    if (onlineLobbyButtons.chatMessage && pointInRect(mouse.x, mouse.y, onlineLobbyButtons.chatMessage.x, onlineLobbyButtons.chatMessage.y, onlineLobbyButtons.chatMessage.width, onlineLobbyButtons.chatMessage.height)) {
       mouse.down = false;
       promptAndSendOnlineChat();
       return;
@@ -5933,8 +6051,8 @@ function handleCanvasClick() {
 
   if (gameState === STATE.SHOP) {
     for (const button of shopPurchaseButtons) {
-      if (button.canBuy && pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
-        buySwordTier(button.tier);
+      if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
+        selectedShopItem = { type: "swordTier", tier: button.tier };
         mouse.down = false;
         return;
       }
@@ -5942,7 +6060,7 @@ function handleCanvasClick() {
 
     for (const button of weaponSelectButtons) {
       if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
-        if (button.canBuy) buyWeapon(button.weaponId);
+        selectedShopItem = { type: "weapon", id: button.weaponId };
         mouse.down = false;
         return;
       }
@@ -5950,10 +6068,16 @@ function handleCanvasClick() {
 
     for (const button of magicPurchaseButtons) {
       if (pointInRect(mouse.x, mouse.y, button.x, button.y, button.width, button.height)) {
-        if (button.canBuy) buyMagic(button.magicId);
+        selectedShopItem = { type: "magic", id: button.magicId };
         mouse.down = false;
         return;
       }
+    }
+
+    if (shopBuyButton && shopBuyButton.canBuy && pointInRect(mouse.x, mouse.y, shopBuyButton.x, shopBuyButton.y, shopBuyButton.width, shopBuyButton.height)) {
+      mouse.down = false;
+      buySelectedShopItem();
+      return;
     }
 
     if (shopBackButton && pointInRect(mouse.x, mouse.y, shopBackButton.x, shopBackButton.y, shopBackButton.width, shopBackButton.height)) {
@@ -6036,9 +6160,10 @@ function handlePointerDown(event) {
   touchInputSeen = true;
   event.preventDefault();
   updateMousePosition(event);
+  resumeBrowserFullscreenFromCanvasGesture();
   retryBrowserFullscreenFromGesture();
 
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
+  if (textInputState || isBrowserOrientationGateActive()) {
     mouse.down = false;
     return;
   }
@@ -6105,7 +6230,7 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!isTouchPointer(event)) return;
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) return;
+  if (textInputState || isBrowserOrientationGateActive()) return;
   if (updateMenuScrollDrag(event)) {
     event.preventDefault();
     return;
@@ -6134,7 +6259,7 @@ function handlePointerEnd(event) {
   if (!isTouchPointer(event)) return;
   event.preventDefault();
 
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
+  if (textInputState || isBrowserOrientationGateActive()) {
     mouse.down = false;
     return;
   }
@@ -6627,46 +6752,26 @@ function suspendBrowserFullscreenFlow() {
   updateBrowserOrientationGate();
 }
 
-function resumeBrowserFullscreenFlow() {
+function resumeBrowserFullscreenFlow({ requestFullscreen = true } = {}) {
   if (runtimeCapabilities.nativeWrapper) return;
-  if (isBrowserPhonePortrait()) {
-    setOrientationGateContent(
-      "Turn Phone Sideways",
-      "Turn your phone sideways to play Blade Box Arena.",
-      "Resume is available after rotating back to landscape.",
-      "Resume Game"
-    );
-    return;
-  }
   browserFullscreenSuspended = false;
   fullscreenRetryPending = true;
   updateBrowserOrientationGate();
-  requestAppLikeDisplay();
+  if (requestFullscreen) requestAppLikeDisplay();
 }
 
 function updateBrowserOrientationGate() {
   const shouldGate = isBrowserPhonePortrait();
-  const shouldShowGate = shouldGate || (browserFullscreenSuspended && isBrowserPhoneViewport());
   browserOrientationGateActive = shouldGate;
-  if (orientationGate) orientationGate.hidden = !shouldShowGate;
-  document.body.classList.toggle("orientation-gated", shouldShowGate);
+  if (orientationGate) orientationGate.hidden = !shouldGate;
+  document.body.classList.toggle("orientation-gated", shouldGate);
   document.body.classList.toggle("fullscreen-suspended", browserFullscreenSuspended);
-
-  if (browserFullscreenSuspended && shouldShowGate) {
-    setOrientationGateContent(
-      "Game Paused",
-      "Fullscreen is off so browser controls can work normally.",
-      shouldGate ? "Turn phone sideways and tap Resume Game when you want to return." : "Use browser/app controls to leave, or tap Resume Game to re-enter fullscreen.",
-      "Resume Game"
-    );
-    return;
-  }
 
   if (shouldGate) {
     setOrientationGateContent(
-      "Turn Phone Sideways",
+      "Hold Upright to Exit",
+      "To leave the game, hold your phone upright and use Exit.",
       "Turn your phone sideways to play Blade Box Arena.",
-      "Need to leave the game? Hold your phone upright and tap Exit.",
       "Exit"
     );
     resetMobileControls();
@@ -6689,6 +6794,12 @@ function retryBrowserFullscreenFromGesture() {
   if (shouldAttemptBrowserFullscreen() || fullscreenRetryPending) {
     requestAppLikeDisplay();
   }
+}
+
+function resumeBrowserFullscreenFromCanvasGesture() {
+  if (!browserFullscreenSuspended || textInputState || isBrowserOrientationGateActive()) return;
+  if (!isBrowserPhoneViewport() || isBrowserPhonePortrait()) return;
+  resumeBrowserFullscreenFlow();
 }
 
 function createNativeLanTransport() {
@@ -8125,8 +8236,8 @@ function getCanvasPoint(event) {
 }
 
 window.addEventListener("keydown", (event) => {
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
-    if (isBrowserOrientationGateActive() || browserFullscreenSuspended) event.preventDefault();
+  if (textInputState || isBrowserOrientationGateActive()) {
+    if (isBrowserOrientationGateActive()) event.preventDefault();
     return;
   }
   const key = event.key.toLowerCase();
@@ -8161,8 +8272,9 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", updateMousePosition);
 canvas.addEventListener("mousedown", (event) => {
   updateMousePosition(event);
+  resumeBrowserFullscreenFromCanvasGesture();
   retryBrowserFullscreenFromGesture();
-  if (textInputState || isBrowserOrientationGateActive() || browserFullscreenSuspended) {
+  if (textInputState || isBrowserOrientationGateActive()) {
     mouse.down = false;
     return;
   }
@@ -8208,11 +8320,7 @@ if (textInputField) {
 }
 if (orientationGateButton) {
   orientationGateButton.addEventListener("click", () => {
-    if (browserFullscreenSuspended) {
-      resumeBrowserFullscreenFlow();
-    } else {
-      suspendBrowserFullscreenFlow();
-    }
+    suspendBrowserFullscreenFlow();
   });
 }
 
